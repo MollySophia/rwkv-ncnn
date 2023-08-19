@@ -4,6 +4,7 @@ import torch
 import ncnn
 import numpy as np
 from rwkv.utils import TOKENIZER
+from rwkv_ncnn_custom_layer import *
 
 WORD_NAME = [
     "20B_tokenizer.json",
@@ -75,6 +76,9 @@ This is not instruct-tuned for conversation yet, so don't expect good quality. B
 # Load Model
 print(f'loading model...')
 net = ncnn.Net()
+net.register_custom_layer(
+    "rwkv.rwkv_v4neo.RWKV_Time_Mixing", RWKV_Time_Mixing_layer_creator, RWKV_Time_Mixing_layer_destroyer
+)
 net.load_param("./output/model.ncnn.param")
 net.load_model("./output/model.ncnn.bin")
 
