@@ -113,11 +113,6 @@ class RWKV_RNN(torch.nn.Module):
             w = self.w
             args = self.args
 
-            if state == None:
-                state = torch.zeros(args.n_layer * 5, args.n_embd, device=self.RUN_DEVICE)
-                for i in range(args.n_layer):
-                    state[5*i+4] -= 1e30
-
             for i in range(args.n_layer):
                 ww = w.blocks[i].att
                 x = x + self.SA(self.LN(x, w.blocks[i].ln1), state, i, 
