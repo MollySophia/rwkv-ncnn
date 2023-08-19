@@ -1,6 +1,7 @@
 from rwkv.rwkv_v4neo import *
-import os, sys, types, struct
+import os, types
 import torch
+import numpy as np
 
 args = types.SimpleNamespace()
 args.FLOAT_MODE = "fp32" # fp32 // fp16 // bf16
@@ -27,7 +28,7 @@ if not os.path.exists("./output"):
 traced_model.save('./output/model.pt')
 print("TorchScript IR saved to ./output/model.pt")
 
-emb_weight = model.emb_weight.float().numpy().tofile("./output/emb_weight.bin")
+emb_weight = model.emb_weight.numpy().tofile("./output/emb_weight.bin")
 print("emb_weight saved to ./output/emb_weight.bin")
 
 if not os.path.exists("./pnnx"):
