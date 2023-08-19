@@ -28,7 +28,7 @@ if not os.path.exists("./output"):
 traced_model.save('./output/model.pt')
 print("TorchScript IR saved to ./output/model.pt")
 
-emb_weight = model.emb_weight.numpy().tofile("./output/emb_weight.bin")
+emb_weight = model.w.emb.weight.numpy().tofile("./output/emb_weight.bin")
 print("emb_weight saved to ./output/emb_weight.bin")
 
 if not os.path.exists("./pnnx"):
@@ -36,4 +36,4 @@ if not os.path.exists("./pnnx"):
     exit()
 
 print("Running pnnx...")
-os.system(f"./pnnx ./output/model.pt inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}]")
+os.system(f"./pnnx ./output/model.pt inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}] moduleop=rwkv.rwkv_v4neo.RWKV_Channel_Mixing,rwkv.rwkv_v4neo.RWKV_Time_Mixing")
