@@ -13,20 +13,18 @@ class RWKV_Channel_Mixing(torch.nn.Module):
     def forward(self, x, state, time_mix_k, time_mix_r, kw, vw, rw):
         xk = x * time_mix_k + state * (1 - time_mix_k)
         xr = x * time_mix_r + state * (1 - time_mix_r)
-        state = x
 
         r = torch.sigmoid(rw @ xr)
         k = torch.square(torch.relu(kw @ xk))
         kv = vw @ k
 
-        return r * kv, state
+        return r * kv
 
 class RWKV_Time_Mixing(torch.nn.Module):
     def forward(self, x, state, state_a, state_b, state_p, time_mix_k, time_mix_v, time_mix_r, time_first, time_decay, kw, vw, rw, ow):
         xk = x * time_mix_k + state * (1 - time_mix_k)
         xv = x * time_mix_v + state * (1 - time_mix_v)
         xr = x * time_mix_r + state * (1 - time_mix_r)
-        state = x
 
         r = torch.sigmoid(rw @ xr)
         kk = kw @ xk
@@ -49,7 +47,7 @@ class RWKV_Time_Mixing(torch.nn.Module):
         state_p = p
         wkv = a / b
         
-        return ow @ (r * wkv), state, state_a, state_b, state_p
+        return ow @ (r * wkv), state_a, state_b, state_p
         
 class Encoder(torch.nn.Module):
     def __init__(self, args, emb, ln_weight, ln_bias):
@@ -150,17 +148,22 @@ class RWKV(torch.nn.Module):
 
             for i in range(self.args.n_layer):
                 ww = w.blocks[i].att
-                t, state[5*i+1], state[5*i+2], state[5*i+3], state[5*i+4] = self.time_mixing(self.LN(x, w.blocks[i].ln1), 
+                input = self.LN(x, w.blocks[i].ln1)
+                output, state[5*i+2], state[5*i+3], state[5*i+4] = self.time_mixing(input,
                     state[5*i+1], state[5*i+2], state[5*i+3], state[5*i+4],
                     ww.time_mix_k, ww.time_mix_v, ww.time_mix_r, ww.time_first, ww.time_decay, 
                     ww.key.weight, ww.value.weight, ww.receptance.weight, ww.output.weight)
-                x += t
+                
+                state[5*i+1] = input
+                x += output
                 
                 ww = w.blocks[i].ffn
-                t, state[5*i+0],  = self.channel_mixing(self.LN(x, w.blocks[i].ln2), state[5*i+0], 
+                input = self.LN(x, w.blocks[i].ln2)
+                output = self.channel_mixing(input, state[5*i+0], 
                     ww.time_mix_k, ww.time_mix_r, 
                     ww.key.weight, ww.value.weight, ww.receptance.weight)
-                x += t
+                state[5*i+0] = input
+                x += output
                 
                 if (i+1) % RWKV_RESCALE_LAYER == 0:
                     x = x / 2
