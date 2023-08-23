@@ -79,6 +79,10 @@ net = ncnn.Net()
 net.register_custom_layer(
     "rwkv.rwkv_v4neo.RWKV_Time_Mixing", RWKV_Time_Mixing_layer_creator, RWKV_Time_Mixing_layer_destroyer
 )
+net.register_custom_layer(
+    "rwkv.rwkv_v4neo.RWKV_Channel_Mixing", RWKV_Channel_Mixing_layer_creator, RWKV_Channel_Mixing_layer_destroyer
+)
+
 net.load_param("./output/model.ncnn.param")
 net.load_model("./output/model.ncnn.bin")
 
