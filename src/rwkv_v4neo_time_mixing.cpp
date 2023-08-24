@@ -20,7 +20,7 @@ RWKV_Time_Mixing::RWKV_Time_Mixing() {
 
 int RWKV_Time_Mixing::load_param(const ncnn::ParamDict& pd) {
     #define LOAD(to, id) \
-        to##_shape = pd.get(id, ncnn::Mat()) 
+        to##_shape = pd.get(id, ncnn::Mat());
     
     LOAD(time_mix_k, 10);
     LOAD(time_mix_v, 11);
@@ -38,19 +38,22 @@ int RWKV_Time_Mixing::load_param(const ncnn::ParamDict& pd) {
 
 int RWKV_Time_Mixing::load_model(const ncnn::ModelBin& mb) {
     #define LOAD(to, args...) \
+        ptr = to##_shape; \
         to = mb.load(args, 1); \
         if(to.empty()) \
             return -100;
 
-    LOAD(time_mix_k, (int)time_mix_k_shape[0]);
-    LOAD(time_mix_v, (int)time_mix_k_shape[0]);
-    LOAD(time_mix_k, (int)time_mix_k_shape[0]);
-    LOAD(rw, (int)rw_shape[0], (int)rw_shape[1]);
-    LOAD(kw, (int)kw_shape[0], (int)kw_shape[1]);
-    LOAD(vw, (int)vw_shape[0], (int)vw_shape[1]);
-    LOAD(time_first, (int)time_first_shape[0]);
-    LOAD(time_decay, (int)time_decay_shape[0]);
-    LOAD(ow, (int)ow_shape[0], (int)ow_shape[1]);
+    int *ptr;
+    
+    LOAD(time_mix_k, ptr[0]);
+    LOAD(time_mix_v, ptr[0]);
+    LOAD(time_mix_r, ptr[0]);
+    LOAD(rw, ptr[0], ptr[1]);
+    LOAD(kw, ptr[0], ptr[1]);
+    LOAD(vw, ptr[0], ptr[1]);
+    LOAD(time_first, ptr[0]);
+    LOAD(time_decay, ptr[0]);
+    LOAD(ow, ptr[0], ptr[1]);
 
     #undef LOAD
     return 0;
@@ -76,6 +79,7 @@ int RWKV_Time_Mixing::create_pipeline(const ncnn::Option& opt) {
     CREATE_BINARY_UNARY(add, 0, BinaryOp);
     CREATE_BINARY_UNARY(sub, 1, BinaryOp);
     CREATE_BINARY_UNARY(mul, 2, BinaryOp);
+    CREATE_BINARY_UNARY(div_op, 3, BinaryOp);
     CREATE_BINARY_UNARY(max, 4, BinaryOp);
     CREATE_BINARY_UNARY(exp, 7, UnaryOp);
 
@@ -95,6 +99,7 @@ int RWKV_Time_Mixing::destroy_pipeline(const ncnn::Option& opt) {
     DESTROY(add);
     DESTROY(sub);
     DESTROY(mul);
+    DESTROY(div_op);
     DESTROY(max);
     DESTROY(exp);
 
@@ -109,21 +114,20 @@ int RWKV_Time_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, 
             bottom_blobs[0] = in0; \
             bottom_blobs[1] = in1; \
             std::vector<ncnn::Mat> top_blobs(1); \
-            top_blobs[0] = out; \
             op->forward(bottom_blobs, top_blobs, opt); \
+            out = top_blobs[0]; \
         }
 
-    ncnn::Mat x = bottom_top_blobs[0];
-    ncnn::Mat state = bottom_top_blobs[1];
-    ncnn::Mat state_a = bottom_top_blobs[2];
-    ncnn::Mat state_b = bottom_top_blobs[3];
-    ncnn::Mat state_p = bottom_top_blobs[4];
+    ncnn::Mat& x = bottom_top_blobs[0];
+    ncnn::Mat& state = bottom_top_blobs[1];
+    ncnn::Mat& state_a = bottom_top_blobs[2];
+    ncnn::Mat& state_b = bottom_top_blobs[3];
+    ncnn::Mat& state_p = bottom_top_blobs[4];
 
     ncnn::Mat xk = mix(x, state, time_mix_k, opt);
     ncnn::Mat xv = mix(x, state, time_mix_v, opt);
     ncnn::Mat xr = mix(x, state, time_mix_r, opt);
 
-    state.clone_from(x);
 
     ncnn::Mat r;
     F_PIPELINE(matmul, rw, xr, r);

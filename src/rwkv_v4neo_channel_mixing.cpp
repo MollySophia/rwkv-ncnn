@@ -36,15 +36,18 @@ int RWKV_Channel_Mixing::load_param(const ncnn::ParamDict& pd) {
 
 int RWKV_Channel_Mixing::load_model(const ncnn::ModelBin& mb) {
     #define LOAD(to, args...) \
+        ptr = to##_shape; \
         to = mb.load(args, 1); \
         if(to.empty()) \
             return -100;
 
-    LOAD(time_mix_k, (int)time_mix_k_shape[0]);
-    LOAD(time_mix_k, (int)time_mix_k_shape[0]);
-    LOAD(rw, (int)rw_shape[0], (int)rw_shape[1]);
-    LOAD(kw, (int)kw_shape[0], (int)kw_shape[1]);
-    LOAD(vw, (int)vw_shape[0], (int)vw_shape[1]);
+    int *ptr;
+    
+    LOAD(time_mix_k, ptr[0]);
+    LOAD(time_mix_r, ptr[0]);
+    LOAD(rw, ptr[0], ptr[1]);
+    LOAD(kw, ptr[0], ptr[1]);
+    LOAD(vw, ptr[0], ptr[1]);
 
     #undef LOAD
     return 0;
@@ -71,6 +74,7 @@ int RWKV_Channel_Mixing::create_pipeline(const ncnn::Option& opt) {
     CREATE_BINARY_UNARY(add, 0, BinaryOp);
     CREATE_BINARY_UNARY(sub, 1, BinaryOp);
     CREATE_BINARY_UNARY(mul, 2, BinaryOp);
+    CREATE_BINARY_UNARY(div_op, 3, BinaryOp);
     CREATE_BINARY_UNARY(max, 4, BinaryOp);
     CREATE_BINARY_UNARY(square, 4, UnaryOp);
     CREATE_BINARY_UNARY(exp, 7, UnaryOp);
@@ -92,6 +96,7 @@ int RWKV_Channel_Mixing::destroy_pipeline(const ncnn::Option& opt) {
     DESTROY(add);
     DESTROY(sub);
     DESTROY(mul);
+    DESTROY(div_op);
     DESTROY(max);
     DESTROY(square);
     DESTROY(exp);
@@ -107,17 +112,15 @@ int RWKV_Channel_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blob
             bottom_blobs[0] = in0; \
             bottom_blobs[1] = in1; \
             std::vector<ncnn::Mat> top_blobs(1); \
-            top_blobs[0] = out; \
             op->forward(bottom_blobs, top_blobs, opt); \
+            out = top_blobs[0]; \
         }
 
-    ncnn::Mat x = bottom_top_blobs[0];
-    ncnn::Mat state = bottom_top_blobs[1];
+    ncnn::Mat& x = bottom_top_blobs[0];
+    ncnn::Mat& state = bottom_top_blobs[1];
 
     ncnn::Mat xk = mix(x, state, time_mix_k, opt);
     ncnn::Mat xr = mix(x, state, time_mix_r, opt);
-
-    state.clone_from(x);
 
     ncnn::Mat r;
     F_PIPELINE(matmul, rw, xr, r);
