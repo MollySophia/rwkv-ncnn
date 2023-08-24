@@ -18,10 +18,6 @@ args = types.SimpleNamespace()
 args.RUN_DEVICE = "cpu"
 args.FLOAT_MODE = "fp32"
 args.vocab_size = 50277
-args.head_qk = 0
-args.pre_ffn = 0
-args.grad_cp = 0
-args.my_pos_emb = 0
 
 args.n_layer = 32
 args.n_embd = 2560

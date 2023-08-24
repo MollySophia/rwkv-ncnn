@@ -2,3 +2,4 @@ output/
 pnnx
 **/__pycache__
 debug*.*
+build
