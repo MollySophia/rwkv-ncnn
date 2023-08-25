@@ -5,6 +5,16 @@ using namespace rwkv;
 
 #define PARAM(id) params.get(id, ncnn::Mat())
 
+#define F_PIPELINE(op, in0, in1, out) \
+    { \
+        std::vector<ncnn::Mat> bottom_blobs(2); \
+        bottom_blobs[0] = in0; \
+        bottom_blobs[1] = in1; \
+        std::vector<ncnn::Mat> top_blobs(1); \
+        op->forward(bottom_blobs, top_blobs, opt); \
+        out = top_blobs[0]; \
+    }
+
 RWKV_Channel_Mixing::RWKV_Channel_Mixing() {
     one_blob_only = false;
     support_inplace = true;
@@ -106,16 +116,6 @@ int RWKV_Channel_Mixing::destroy_pipeline(const ncnn::Option& opt) {
 }
 
 int RWKV_Channel_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, const ncnn::Option& opt) const {
-    #define F_PIPELINE(op, in0, in1, out) \
-        { \
-            std::vector<ncnn::Mat> bottom_blobs(2); \
-            bottom_blobs[0] = in0; \
-            bottom_blobs[1] = in1; \
-            std::vector<ncnn::Mat> top_blobs(1); \
-            op->forward(bottom_blobs, top_blobs, opt); \
-            out = top_blobs[0]; \
-        }
-
     ncnn::Mat& x = bottom_top_blobs[0];
     ncnn::Mat& state = bottom_top_blobs[1];
 
@@ -135,18 +135,26 @@ int RWKV_Channel_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blob
     F_PIPELINE(matmul, vw, k, kv);
     F_PIPELINE(mul, r, kv, x);
 
-    #undef F_PIPELINE
     return 0;
 }
 
-ncnn::Mat RWKV_Channel_Mixing::mix(ncnn::Mat in1, ncnn::Mat in2, ncnn::Mat param, const ncnn::Option& opt) const {
-    // in1 & in2 & param all in the same shape & dim=1
-    int w = in1.w;
-    ncnn::Mat out = ncnn::Mat(w);
-
+ncnn::Mat RWKV_Channel_Mixing::mix(ncnn::Mat in0, ncnn::Mat in1, ncnn::Mat param, const ncnn::Option& opt) const {
+    ncnn::Mat out, tmp0, tmp1, one_sub_param = ncnn::Mat(param).clone();
+    F_PIPELINE(mul, in0, param, tmp0);
+    
+    const int channels = one_sub_param.c;
+    const int size = one_sub_param.w * one_sub_param.h * one_sub_param.d;
+    
     #pragma omp parallel for num_threads(opt.num_threads)
-    for (int i = 0; i < w; i++)
-        out[i] = (const float)in1[i] * (const float)param[i] + (const float)in2[i] * (1 - (const float)param[i]);
+    for(int q = 0; q < channels; q++) {
+        float *ptr = one_sub_param.channel(q);
+        for(int i = 0; i < size; i++) {
+            ptr[i] = 1 - ptr[i];
+        }
+    }
+
+    F_PIPELINE(mul, in1, one_sub_param, tmp1);
+    F_PIPELINE(add, tmp0, tmp1, out);
 
     return out;
 }
