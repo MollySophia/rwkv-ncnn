@@ -20,10 +20,6 @@ RWKV_Time_Mixing::RWKV_Time_Mixing() {
     support_inplace = true;
     sigmoid = 0;
     matmul = 0;
-    add = 0;
-    sub = 0;
-    mul = 0;
-    div_op = 0;
     max = 0;
     exp = 0;
 }
@@ -58,12 +54,12 @@ int RWKV_Time_Mixing::load_model(const ncnn::ModelBin& mb) {
     LOAD(time_mix_k, ptr[0]);
     LOAD(time_mix_v, ptr[0]);
     LOAD(time_mix_r, ptr[0]);
-    LOAD(rw, ptr[0], ptr[1]);
-    LOAD(kw, ptr[0], ptr[1]);
-    LOAD(vw, ptr[0], ptr[1]);
+    LOAD(rw, ptr[1], ptr[0]);
+    LOAD(kw, ptr[1], ptr[0]);
+    LOAD(vw, ptr[1], ptr[0]);
     LOAD(time_first, ptr[0]);
     LOAD(time_decay, ptr[0]);
-    LOAD(ow, ptr[0], ptr[1]);
+    LOAD(ow, ptr[1], ptr[0]);
 
     #undef LOAD
     return 0;
@@ -79,17 +75,13 @@ int RWKV_Time_Mixing::create_pipeline(const ncnn::Option& opt) {
             layer = ncnn::create_layer(ncnn::LayerType::layertype); \
             ncnn::ParamDict pd; \
             pd.set(0, op); \
-            add->load_param(pd); \
+            layer->load_param(pd); \
             layer->create_pipeline(opt); \
         }
         
 
     CREATE(sigmoid, Sigmoid);
     CREATE(matmul, MatMul);
-    CREATE_BINARY_UNARY(add, 0, BinaryOp);
-    CREATE_BINARY_UNARY(sub, 1, BinaryOp);
-    CREATE_BINARY_UNARY(mul, 2, BinaryOp);
-    CREATE_BINARY_UNARY(div_op, 3, BinaryOp);
     CREATE_BINARY_UNARY(max, 4, BinaryOp);
     CREATE_BINARY_UNARY(exp, 7, UnaryOp);
 
@@ -106,10 +98,6 @@ int RWKV_Time_Mixing::destroy_pipeline(const ncnn::Option& opt) {
 
     DESTROY(sigmoid);
     DESTROY(matmul);
-    DESTROY(add);
-    DESTROY(sub);
-    DESTROY(mul);
-    DESTROY(div_op);
     DESTROY(max);
     DESTROY(exp);
 
@@ -129,11 +117,9 @@ int RWKV_Time_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, 
     ncnn::Mat xv = mix(x, state, time_mix_v, opt);
     ncnn::Mat xr = mix(x, state, time_mix_r, opt);
 
-
     ncnn::Mat r;
     F_PIPELINE(matmul, rw, xr, r);
     sigmoid->forward_inplace(r, opt);
-    
     ncnn::Mat kk;
     F_PIPELINE(matmul, kw, xk, kk);
 
@@ -142,55 +128,41 @@ int RWKV_Time_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, 
 
     ncnn::Mat ww, a, b, p, e1, e2, tmp1, tmp2;
 
-    F_PIPELINE(add, time_first, kk, ww);
+    ww = add(time_first, kk, opt);
     F_PIPELINE(max, state_p, ww, p);
-    F_PIPELINE(sub, state_p, p, e1);
+    e1 = sub(state_p, p, opt);
     exp->forward_inplace(e1, opt);
-    F_PIPELINE(sub, ww, p, e2);
+    e2 = sub(ww, p, opt);
     exp->forward_inplace(e2, opt);
-    F_PIPELINE(mul, e1, state_a, tmp1);
-    F_PIPELINE(mul, e2, vv, tmp2);
-    F_PIPELINE(add, tmp1, tmp2, a);
-    F_PIPELINE(mul, e1, state_b, tmp1);
-    F_PIPELINE(add, tmp1, e2, b);
+    tmp1 = multiply(e1, state_a, opt);
+    tmp2 = multiply(e2, vv, opt);
+    a = add(tmp1, tmp2, opt);
+    tmp1 = multiply(e1, state_b, opt);
+    b = add(tmp1, e2, opt);
 
-    F_PIPELINE(add, state_p, time_decay, ww);
+    ww = add(state_p, time_decay, opt);
     F_PIPELINE(max, ww, kk, p);
-    F_PIPELINE(sub, ww, p, e1);
+    e1 = sub(ww, p, opt);
     exp->forward_inplace(e1, opt);
-    F_PIPELINE(sub, kk, p, e2);
+    e2 = sub(kk, p, opt);
     exp->forward_inplace(e2, opt);
-    F_PIPELINE(mul, e1, state_a, tmp1);
-    F_PIPELINE(mul, e2, vv, tmp2);
-    F_PIPELINE(add, tmp1, tmp2, state_a);
-    F_PIPELINE(mul, e1, state_b, tmp1);
-    F_PIPELINE(add, tmp1, e2, state_b);
+    tmp1 = multiply(e1, state_a, opt);
+    tmp2 = multiply(e2, vv, opt);
+    state_a = add(tmp1, tmp2, opt);
+    tmp1 = multiply(e1, state_b, opt);
+    state_b = add(tmp1, e2, opt);
     state_p.clone_from(p);
 
-    F_PIPELINE(div_op, a, b, tmp1);
-    F_PIPELINE(mul, r, tmp1, tmp2);
-    F_PIPELINE(matmul, ow, tmp2, x);
+    tmp1 = divide(a, b, opt);
+    tmp2 = multiply(r, tmp1, opt);
+
+    ncnn::Mat out;
+    F_PIPELINE(matmul, ow, tmp2, out);
+    
+    bottom_top_blobs[0] = state_p;
+    bottom_top_blobs[1] = state_b;
+    bottom_top_blobs[2] = state_a;
+    bottom_top_blobs[3] = out;
 
     return 0;
-}
-
-ncnn::Mat RWKV_Time_Mixing::mix(ncnn::Mat in0, ncnn::Mat in1, ncnn::Mat param, const ncnn::Option& opt) const {
-    ncnn::Mat out, tmp0, tmp1, one_sub_param = ncnn::Mat(param).clone();
-    F_PIPELINE(mul, in0, param, tmp0);
-    
-    const int channels = one_sub_param.c;
-    const int size = one_sub_param.w * one_sub_param.h * one_sub_param.d;
-    
-    #pragma omp parallel for num_threads(opt.num_threads)
-    for(int q = 0; q < channels; q++) {
-        float *ptr = one_sub_param.channel(q);
-        for(int i = 0; i < size; i++) {
-            ptr[i] = 1 - ptr[i];
-        }
-    }
-
-    F_PIPELINE(mul, in1, one_sub_param, tmp1);
-    F_PIPELINE(add, tmp0, tmp1, out);
-
-    return out;
 }

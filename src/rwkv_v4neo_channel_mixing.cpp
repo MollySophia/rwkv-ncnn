@@ -21,10 +21,6 @@ RWKV_Channel_Mixing::RWKV_Channel_Mixing() {
     sigmoid = 0;
     relu = 0;
     matmul = 0;
-    add = 0;
-    sub = 0;
-    mul = 0;
-    div_op = 0;
     max = 0;
     square = 0;
     exp = 0;
@@ -55,9 +51,9 @@ int RWKV_Channel_Mixing::load_model(const ncnn::ModelBin& mb) {
     
     LOAD(time_mix_k, ptr[0]);
     LOAD(time_mix_r, ptr[0]);
-    LOAD(rw, ptr[0], ptr[1]);
-    LOAD(kw, ptr[0], ptr[1]);
-    LOAD(vw, ptr[0], ptr[1]);
+    LOAD(rw, ptr[1], ptr[0]);
+    LOAD(kw, ptr[1], ptr[0]);
+    LOAD(vw, ptr[1], ptr[0]);
 
     #undef LOAD
     return 0;
@@ -73,7 +69,7 @@ int RWKV_Channel_Mixing::create_pipeline(const ncnn::Option& opt) {
             layer = ncnn::create_layer(ncnn::LayerType::layertype); \
             ncnn::ParamDict pd; \
             pd.set(0, op); \
-            add->load_param(pd); \
+            layer->load_param(pd); \
             layer->create_pipeline(opt); \
         }
         
@@ -81,10 +77,6 @@ int RWKV_Channel_Mixing::create_pipeline(const ncnn::Option& opt) {
     CREATE(sigmoid, Sigmoid);
     CREATE(relu, ReLU);
     CREATE(matmul, MatMul);
-    CREATE_BINARY_UNARY(add, 0, BinaryOp);
-    CREATE_BINARY_UNARY(sub, 1, BinaryOp);
-    CREATE_BINARY_UNARY(mul, 2, BinaryOp);
-    CREATE_BINARY_UNARY(div_op, 3, BinaryOp);
     CREATE_BINARY_UNARY(max, 4, BinaryOp);
     CREATE_BINARY_UNARY(square, 4, UnaryOp);
     CREATE_BINARY_UNARY(exp, 7, UnaryOp);
@@ -103,10 +95,6 @@ int RWKV_Channel_Mixing::destroy_pipeline(const ncnn::Option& opt) {
     DESTROY(sigmoid);
     DESTROY(relu);
     DESTROY(matmul);
-    DESTROY(add);
-    DESTROY(sub);
-    DESTROY(mul);
-    DESTROY(div_op);
     DESTROY(max);
     DESTROY(square);
     DESTROY(exp);
@@ -133,28 +121,9 @@ int RWKV_Channel_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blob
 
     ncnn::Mat kv;
     F_PIPELINE(matmul, vw, k, kv);
-    F_PIPELINE(mul, r, kv, x);
-
+    
+    ncnn::Mat out;
+    out = multiply(r, kv, opt);
+    bottom_top_blobs[0] = out;
     return 0;
-}
-
-ncnn::Mat RWKV_Channel_Mixing::mix(ncnn::Mat in0, ncnn::Mat in1, ncnn::Mat param, const ncnn::Option& opt) const {
-    ncnn::Mat out, tmp0, tmp1, one_sub_param = ncnn::Mat(param).clone();
-    F_PIPELINE(mul, in0, param, tmp0);
-    
-    const int channels = one_sub_param.c;
-    const int size = one_sub_param.w * one_sub_param.h * one_sub_param.d;
-    
-    #pragma omp parallel for num_threads(opt.num_threads)
-    for(int q = 0; q < channels; q++) {
-        float *ptr = one_sub_param.channel(q);
-        for(int i = 0; i < size; i++) {
-            ptr[i] = 1 - ptr[i];
-        }
-    }
-
-    F_PIPELINE(mul, in1, one_sub_param, tmp1);
-    F_PIPELINE(add, tmp0, tmp1, out);
-
-    return out;
 }
