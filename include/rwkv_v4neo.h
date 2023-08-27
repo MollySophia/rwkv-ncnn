@@ -38,14 +38,34 @@ struct model_args_t {
     int embd_num;
     int ctx_len;
     int rescale_layer;
+    char model_bin_path[64];
+    char model_param_path[64];
+    char emb_weights_path[64];
 };
 
 class RWKV {
 public:
+    ncnn::Mat state;
+
+    RWKV(model_args_t *args);
+
+    int load_model_files();
+
+    inline ncnn::Mat forward(int token) {
+        ncnn::Extractor ex = net.create_extractor();
+        ex.input("in0", emb_weights[token]);
+        ex.input("in1", state);
+
+        ncnn::Mat out;
+        ex.extract("out0", out);
+        return out;
+    }
 
 private:
-    ncnn::Net ncnn;
+    ncnn::Net net;
+    model_args_t *args;
 
+    std::vector<ncnn::Mat> emb_weights;
 };
 
 inline ncnn::Mat mix(ncnn::Mat in0, ncnn::Mat in1, ncnn::Mat param, const ncnn::Option& opt) {
