@@ -21,6 +21,9 @@ RWKV_Channel_Mixing::RWKV_Channel_Mixing() {
     sigmoid = 0;
     relu = 0;
     matmul = 0;
+    add = 0;
+    mul = 0;
+    one_sub = 0;
     max = 0;
     square = 0;
     exp = 0;
@@ -35,6 +38,7 @@ int RWKV_Channel_Mixing::load_param(const ncnn::ParamDict& pd) {
     LOAD(rw, 12);
     LOAD(kw, 13);
     LOAD(vw, 14);
+    layer_num = pd.get(15, 0);
 
     #undef LOAD
     return 0;
@@ -77,9 +81,26 @@ int RWKV_Channel_Mixing::create_pipeline(const ncnn::Option& opt) {
     CREATE(sigmoid, Sigmoid);
     CREATE(relu, ReLU);
     CREATE(matmul, MatMul);
+    CREATE_BINARY_UNARY(add, 0, BinaryOp);
+    CREATE_BINARY_UNARY(mul, 2, BinaryOp);
     CREATE_BINARY_UNARY(max, 4, BinaryOp);
     CREATE_BINARY_UNARY(square, 4, UnaryOp);
     CREATE_BINARY_UNARY(exp, 7, UnaryOp);
+
+    {
+        one_sub = ncnn::create_layer(ncnn::LayerType::BinaryOp);
+        ncnn::ParamDict pd;
+        pd.set(0, 7);
+        pd.set(1, 1);
+        pd.set(2, 1.0f);
+        one_sub->load_param(pd);
+        one_sub->create_pipeline(opt);
+    }
+
+    _time_mix_k = time_mix_k.clone();
+    _time_mix_r = time_mix_r.clone();
+    one_sub->forward_inplace(_time_mix_k, opt);
+    one_sub->forward_inplace(_time_mix_r, opt);
 
     #undef CREATE
     #undef CREATE_BINARY_UNARY
@@ -95,9 +116,12 @@ int RWKV_Channel_Mixing::destroy_pipeline(const ncnn::Option& opt) {
     DESTROY(sigmoid);
     DESTROY(relu);
     DESTROY(matmul);
+    DESTROY(add);
+    DESTROY(mul);
     DESTROY(max);
     DESTROY(square);
     DESTROY(exp);
+    DESTROY(one_sub);
 
     #undef DESTROY
     return 0;
@@ -105,25 +129,27 @@ int RWKV_Channel_Mixing::destroy_pipeline(const ncnn::Option& opt) {
 
 int RWKV_Channel_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, const ncnn::Option& opt) const {
     ncnn::Mat& x = bottom_top_blobs[0];
-    ncnn::Mat& state = bottom_top_blobs[1];
+    ncnn::Mat state = bottom_top_blobs[1].row_range(5 * layer_num, 1);
+    state.dims = 1;
 
-    ncnn::Mat xk = mix(x, state, time_mix_k, opt);
-    ncnn::Mat xr = mix(x, state, time_mix_r, opt);
+    ncnn::Mat xk = mix(x, state, time_mix_k, _time_mix_k, opt);
+    ncnn::Mat xr = mix(x, state, time_mix_r, _time_mix_r, opt);
 
-    ncnn::Mat r;
-    F_PIPELINE(matmul, rw, xr, r);
-    sigmoid->forward_inplace(r, opt);
-    
-    ncnn::Mat k;
-    F_PIPELINE(matmul, kw, xk, k);
-    relu->forward_inplace(k, opt);
-    square->forward_inplace(k, opt);
-
-    ncnn::Mat kv;
-    F_PIPELINE(matmul, vw, k, kv);
-    
-    ncnn::Mat out;
-    out = multiply(r, kv, opt);
-    bottom_top_blobs[0] = out;
+    F_PIPELINE(matmul, rw, xr, xr);
+    sigmoid->forward_inplace(xr, opt);
+    F_PIPELINE(matmul, kw, xk, xk);
+    relu->forward_inplace(xk, opt);
+    square->forward_inplace(xk, opt);
+    F_PIPELINE(matmul, vw, xk, xk);
+    F_PIPELINE(mul, xr, xk, x);
     return 0;
+}
+
+ncnn::Mat RWKV_Channel_Mixing::mix(ncnn::Mat in0, ncnn::Mat in1, ncnn::Mat param, ncnn::Mat _param, const ncnn::Option& opt) const {
+    ncnn::Mat tmp1, tmp2, out;
+    F_PIPELINE(mul, in0, param, tmp1);
+    F_PIPELINE(mul, in1, _param, tmp2);
+    F_PIPELINE(add, tmp1, tmp2, out);    
+
+    return out;
 }

@@ -11,17 +11,23 @@
     return new rwkv::RWKV_Channel_Mixing;
 }
 
+::ncnn::Layer* RWKV_Decoder_layer_creator(void* /*userdata*/)
+{
+    return new rwkv::RWKV_Decoder;
+}
+
 using namespace rwkv;
 
 RWKV::RWKV(model_args_t *args) {
     if(!args)
         return;
     this->args = args;
-    state = ncnn::Mat(args->embd_num, 5 * args->ctx_len);
+    state = ncnn::Mat(args->embd_num, 5 * args->layer_num);
     state.fill(0.0f);
 
     net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Time_Mixing", RWKV_Time_Mixing_layer_creator);
     net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Channel_Mixing", RWKV_Channel_Mixing_layer_creator);
+    net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Decoder", RWKV_Decoder_layer_creator);
     net.opt.use_fp16_packed = false;
     net.opt.use_fp16_storage = false;
     net.opt.use_fp16_arithmetic = false;

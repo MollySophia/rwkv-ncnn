@@ -1,5 +1,14 @@
 #pragma once
 #include <ncnn/net.h>
+#include <ncnn/layer_type.h>
+#include <vector>
+#include <iostream>
+
+#define DEBUG_TIME 1
+
+#if DEBUG_TIME
+#include <chrono>
+#endif
 
 inline void pretty_print(const ncnn::Mat& m)
 {
@@ -46,18 +55,41 @@ struct model_args_t {
 class RWKV {
 public:
     ncnn::Mat state;
+    std::vector<int> model_tokens;
 
     RWKV(model_args_t *args);
 
     int load_model_files();
 
     inline ncnn::Mat forward(int token) {
+    #if DEBUG_TIME
+        auto start = std::chrono::system_clock::now();
+    #endif
         ncnn::Extractor ex = net.create_extractor();
         ex.input("in0", emb_weights[token]);
         ex.input("in1", state);
 
         ncnn::Mat out;
         ex.extract("out0", out);
+    #if DEBUG_TIME
+        auto forward_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now() - start);
+        std::cout << "time " << forward_time.count() << std::endl;
+    #endif
+        return out;
+    }
+
+    inline ncnn::Mat forward(std::vector<int> tokens) {
+        ncnn::Mat out;
+        std::cout << "Tokens num:" << tokens.size() << std::endl;
+        for(int i = 0; i < tokens.size(); i++) {
+            model_tokens.push_back(tokens[i]);
+            if(i == tokens.size() - 1)
+                out = forward(tokens[i]);
+            else
+                forward(tokens[i]);
+            std::cout << "token " << i << std::endl;
+        }
         return out;
     }
 
@@ -67,106 +99,6 @@ private:
 
     std::vector<ncnn::Mat> emb_weights;
 };
-
-inline ncnn::Mat mix(ncnn::Mat in0, ncnn::Mat in1, ncnn::Mat param, const ncnn::Option& opt) {
-    const int channels = param.c;
-    const int size = param.w * param.h * param.d;
-    ncnn::Mat out = ncnn::Mat(size);
-
-    #pragma omp parallel for num_threads(opt.num_threads)
-    for(int q = 0; q < channels; q++) {
-        float *ptr0 = in0.channel(q);
-        float *ptr1 = in1.channel(q);
-        float *ptr2 = param.channel(q);
-        float *ptr3 = out.channel(q);
-        for(int i = 0; i < size; i++)
-            ptr3[i] = ptr0[i] * ptr2[i] + ptr1[i] * (1 - ptr2[i]);
-    }
-
-    return out;
-}
-
-inline ncnn::Mat multiply(ncnn::Mat in0, ncnn::Mat in1, const ncnn::Option& opt) {
-    // we only do multiply on mats of the same size
-    if((in0.w * in0.h * in0.d) != (in1.w * in1.h * in1.d))
-        return ncnn::Mat();
-
-    const int channels = in0.c;
-    const int size = in0.w * in0.h * in0.d;
-    ncnn::Mat out = ncnn::Mat(size);
-
-    #pragma omp parallel for num_threads(opt.num_threads)
-    for(int q = 0; q < channels; q++) {
-        float *ptr0 = in0.channel(q);
-        float *ptr1 = in1.channel(q);
-        float *ptr2 = out.channel(q);
-        for(int i = 0; i < size; i++)
-            ptr2[i] = ptr0[i] * ptr1[i];
-    }
-
-    return out;
-}
-
-inline ncnn::Mat add(ncnn::Mat in0, ncnn::Mat in1, const ncnn::Option& opt) {
-    if((in0.w * in0.h * in0.d) != (in1.w * in1.h * in1.d))
-        return ncnn::Mat();
-
-    const int channels = in0.c;
-    const int size = in0.w * in0.h * in0.d;
-    ncnn::Mat out = ncnn::Mat(size);
-
-    #pragma omp parallel for num_threads(opt.num_threads)
-    for(int q = 0; q < channels; q++) {
-        float *ptr0 = in0.channel(q);
-        float *ptr1 = in1.channel(q);
-        float *ptr2 = out.channel(q);
-        for(int i = 0; i < size; i++)
-            ptr2[i] = ptr0[i] + ptr1[i];
-    }
-
-    return out;
-}
-
-inline ncnn::Mat sub(ncnn::Mat in0, ncnn::Mat in1, const ncnn::Option& opt) {
-    if((in0.w * in0.h * in0.d) != (in1.w * in1.h * in1.d))
-        return ncnn::Mat();
-
-    const int channels = in0.c;
-    const int size = in0.w * in0.h * in0.d;
-    ncnn::Mat out = ncnn::Mat(size);
-
-    #pragma omp parallel for num_threads(opt.num_threads)
-    for(int q = 0; q < channels; q++) {
-        float *ptr0 = in0.channel(q);
-        float *ptr1 = in1.channel(q);
-        float *ptr2 = out.channel(q);
-        for(int i = 0; i < size; i++)
-            ptr2[i] = ptr0[i] - ptr1[i];
-    }
-
-    return out;
-}
-
-inline ncnn::Mat divide(ncnn::Mat in0, ncnn::Mat in1, const ncnn::Option& opt) {
-    if((in0.w * in0.h * in0.d) != (in1.w * in1.h * in1.d)) {
-        return ncnn::Mat();
-    }
-
-    const int channels = in0.c;
-    const int size = in0.w * in0.h * in0.d;
-    ncnn::Mat out = ncnn::Mat(size);
-
-    #pragma omp parallel for num_threads(opt.num_threads)
-    for(int q = 0; q < channels; q++) {
-        float *ptr0 = in0.channel(q);
-        float *ptr1 = in1.channel(q);
-        float *ptr2 = out.channel(q);
-        for(int i = 0; i < size; i++)
-            ptr2[i] = ptr0[i] / ptr1[i];
-    }
-
-    return out;
-}
 
 #define DECLARE_WEIGHT(name) \
     ncnn::Mat name; \
@@ -191,6 +123,7 @@ private:
     DECLARE_WEIGHT(time_mix_k)
     DECLARE_WEIGHT(time_mix_v)
     DECLARE_WEIGHT(time_mix_r)
+
     DECLARE_WEIGHT(time_first)
     DECLARE_WEIGHT(time_decay)
     DECLARE_WEIGHT(rw)
@@ -198,10 +131,23 @@ private:
     DECLARE_WEIGHT(vw)
     DECLARE_WEIGHT(ow)
 
+    ncnn::Mat _time_mix_k;
+    ncnn::Mat _time_mix_v;
+    ncnn::Mat _time_mix_r;
+
+    ncnn::Mat mix(ncnn::Mat in0, ncnn::Mat in1, ncnn::Mat param, ncnn::Mat _param, const ncnn::Option& opt) const;
+
     ncnn::Layer *sigmoid;
     ncnn::Layer *matmul;
+    ncnn::Layer *add;
+    ncnn::Layer *sub;
+    ncnn::Layer *mul;
+    ncnn::Layer *div_op;
+    ncnn::Layer *one_sub;
     ncnn::Layer *max;
     ncnn::Layer *exp;
+
+    int layer_num;
 };
 
 class RWKV_Channel_Mixing : public ncnn::Layer {
@@ -226,12 +172,72 @@ private:
     DECLARE_WEIGHT(kw)
     DECLARE_WEIGHT(vw)
 
+    ncnn::Mat _time_mix_k;
+    ncnn::Mat _time_mix_r;
+
+    ncnn::Mat mix(ncnn::Mat in0, ncnn::Mat in1, ncnn::Mat param, ncnn::Mat _param, const ncnn::Option& opt) const;
+
     ncnn::Layer *sigmoid;
     ncnn::Layer *relu;
     ncnn::Layer *matmul;
+    ncnn::Layer *add;
+    ncnn::Layer *mul;
+    ncnn::Layer *one_sub;
     ncnn::Layer *max;
     ncnn::Layer *square;
     ncnn::Layer *exp;
+
+    int layer_num;
+};
+
+class RWKV_Decoder : public ncnn::Layer {
+public:
+    RWKV_Decoder() {
+        one_blob_only = false;
+        support_inplace = true;
+        matmul = 0;
+    }
+
+    virtual int load_param(const ncnn::ParamDict& pd) {
+        ow_shape = pd.get(10, ncnn::Mat());
+        return 0;
+    }
+
+    virtual int load_model(const ncnn::ModelBin& mb) {
+        int *ptr;
+        ptr = ow_shape;
+        ow = mb.load(ptr[1], ptr[0], 1);
+        if(ow.empty())
+            return -100;
+
+        return 0;
+    }
+
+    virtual int forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, const ncnn::Option& opt) const {
+        ncnn::Mat& x = bottom_top_blobs[0];
+        std::vector<ncnn::Mat> bottom_blobs(2);
+        bottom_blobs[0] = ow;
+        bottom_blobs[1] = x;
+        std::vector<ncnn::Mat> top_blobs(1);
+        matmul->forward(bottom_blobs, top_blobs, opt);
+        x = top_blobs[0];
+        return 0;
+    }
+
+    virtual int create_pipeline(const ncnn::Option& opt) {
+        matmul = ncnn::create_layer(ncnn::LayerType::MatMul);
+        matmul->create_pipeline(opt);
+        return 0;
+    }
+
+    virtual int destroy_pipeline(const ncnn::Option& opt) {
+        matmul->destroy_pipeline(opt);
+        return 0;
+    }
+
+private:
+    DECLARE_WEIGHT(ow)
+    ncnn::Layer *matmul;
 };
 
 }
