@@ -1,9 +1,5 @@
 #include "rwkv_v4neo.h"
 #include <ncnn/layer_type.h>
-#define DEBUG_TIME 1
-#if DEBUG_TIME
-#include <chrono>
-#endif
 
 using namespace rwkv;
 
@@ -157,6 +153,9 @@ int RWKV_Time_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, 
     ncnn::Mat xv = mix(x, state, time_mix_v, _time_mix_v, opt);
     ncnn::Mat xr = mix(x, state, time_mix_r, _time_mix_r, opt);
 
+    float *ptr = bottom_top_blobs[1].row(5 * layer_num + 1);
+    memcpy(ptr, x, sizeof(float) * x.w);
+
     F_PIPELINE(matmul, rw, xr, xr);
     sigmoid->forward_inplace(xr, opt);
     F_PIPELINE(matmul, kw, xk, xk);
@@ -193,6 +192,13 @@ int RWKV_Time_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, 
     F_PIPELINE(add, tmp1, tmp2, state_a);
     F_PIPELINE(mul, e1, state_b, tmp1);
     F_PIPELINE(add, tmp1, e2, state_b);
+
+    ptr = bottom_top_blobs[1].row(5 * layer_num + 2);
+    memcpy(ptr, state_a, sizeof(float) * state_a.w);
+    ptr = bottom_top_blobs[1].row(5 * layer_num + 3);
+    memcpy(ptr, state_b, sizeof(float) * state_a.w);
+    ptr = bottom_top_blobs[1].row(5 * layer_num + 4);
+    memcpy(ptr, state_p, sizeof(float) * state_a.w);
 
     return 0;
 }

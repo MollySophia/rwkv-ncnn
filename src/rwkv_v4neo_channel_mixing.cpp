@@ -135,6 +135,9 @@ int RWKV_Channel_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blob
     ncnn::Mat xk = mix(x, state, time_mix_k, _time_mix_k, opt);
     ncnn::Mat xr = mix(x, state, time_mix_r, _time_mix_r, opt);
 
+    float *ptr = bottom_top_blobs[1].row(5 * layer_num);
+    memcpy(ptr, x, sizeof(float) * x.w);
+
     F_PIPELINE(matmul, rw, xr, xr);
     sigmoid->forward_inplace(xr, opt);
     F_PIPELINE(matmul, kw, xk, xk);

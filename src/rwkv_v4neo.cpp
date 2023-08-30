@@ -1,5 +1,7 @@
 #include "rwkv_v4neo.h"
 #include <ncnn/net.h>
+#include <ncnn/layer_type.h>
+#include <algorithm>
 
 ::ncnn::Layer* RWKV_Time_Mixing_layer_creator(void* /*userdata*/)
 {
@@ -25,13 +27,20 @@ RWKV::RWKV(model_args_t *args) {
     state = ncnn::Mat(args->embd_num, 5 * args->layer_num);
     state.fill(0.0f);
 
+    for(int i = 0; i < args->layer_num; i++) {
+        float *ptr = state.row(5 * i + 4);
+        for(int j = 0; j < args->embd_num; j++)
+            ptr[j] = -1e30;
+    }
+
+    softmax = ncnn::create_layer(ncnn::LayerType::Softmax);
+    softmax->create_pipeline(net.opt);
+    cumsum = ncnn::create_layer(ncnn::LayerType::CumulativeSum);
+    cumsum->create_pipeline(net.opt);
+
     net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Time_Mixing", RWKV_Time_Mixing_layer_creator);
     net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Channel_Mixing", RWKV_Channel_Mixing_layer_creator);
     net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Decoder", RWKV_Decoder_layer_creator);
-    net.opt.use_fp16_packed = false;
-    net.opt.use_fp16_storage = false;
-    net.opt.use_fp16_arithmetic = false;
-    net.opt.use_vulkan_compute = false;
 }
 
 int RWKV::load_model_files() {
@@ -69,4 +78,45 @@ int RWKV::load_model_files() {
     }
 
     return 0;
+}
+
+int RWKV::sample_logits(ncnn::Mat logits, float temp, float top_p, float top_k) {
+    softmax->forward_inplace(logits, net.opt);
+    ncnn::Mat sorted_probs = ncnn::Mat(logits).clone();
+    float *ptr = sorted_probs;
+    int size = sorted_probs.w;
+    std::sort(ptr, ptr + size, std::greater<float>());
+    ncnn::Mat cumulative_probs = ncnn::Mat(sorted_probs).clone();
+    cumsum->forward_inplace(cumulative_probs, net.opt);
+    float cutoff = 0;
+    int index;
+    ptr = cumulative_probs;
+    for(index = 0; index < size; index++)
+        if(ptr[index] > top_p) {
+            break;
+        }
+
+    ptr = sorted_probs;
+    cutoff = ptr[index];
+
+    ptr = logits;
+    for(int i = 0; i < size; i++)
+        if(ptr[i] < cutoff)
+            ptr[i] = 0;
+    
+    float sum = 0;
+    for(int i = 0; i < size; i++)
+        sum += ptr[i];
+    for(int i = 0; i < size; i++)
+        ptr[i] /= sum;
+
+    int out = 0;
+    float max = 0;
+    for(int i = 0; i < size; i++) {
+        if(ptr[i] > max) {
+            max = ptr[i];
+            out = i;
+        }
+    }
+    return out;
 }

@@ -35,11 +35,29 @@ rwkv::model_args_t model_args = {
 rwkv::RWKV RWKV(&model_args);
 
 int main(int argc, char **argv) {
+    cout.setf(ios::unitbuf);
     RWKV.load_model_files();
     rwkv::TRIE_Tokenizer tokenizer("../rwkv_vocab_v20230424.bin");
-    cout << "Running prompt" << endl;
-    ncnn::Mat out = RWKV.forward(tokenizer.Encode(init_prompt));
-    // ncnn::Mat out = RWKV.forward(0);
-    pretty_print(out);
+    // cout << "Running prompt" << endl;
+    // ncnn::Mat out = RWKV.forward(tokenizer.Encode(init_prompt));
+
+    while (true) {
+        cout << "User: ";
+        string input;
+        getline(cin, input);
+        cout << "Assisstant:";
+        ncnn::Mat out = RWKV.forward(tokenizer.Encode(
+            "User: " + input + "\n\nAssisstant:"
+        ));
+        for(int i = 0; i < 999; i++) {
+            int output = RWKV.sample_logits(out);
+            if(output == 261)
+                break;
+            auto output_str = tokenizer.Decode(output);
+            cout << output_str;
+            out = RWKV.forward(output);
+        }
+        cout << endl;
+    }
     return 0;
 }

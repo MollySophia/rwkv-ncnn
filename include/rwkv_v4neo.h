@@ -4,7 +4,7 @@
 #include <vector>
 #include <iostream>
 
-#define DEBUG_TIME 1
+#define DEBUG_TIME 0
 
 #if DEBUG_TIME
 #include <chrono>
@@ -71,6 +71,7 @@ public:
 
         ncnn::Mat out;
         ex.extract("out0", out);
+        ex.extract("out1", state);
     #if DEBUG_TIME
         auto forward_time = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now() - start);
@@ -81,21 +82,23 @@ public:
 
     inline ncnn::Mat forward(std::vector<int> tokens) {
         ncnn::Mat out;
-        std::cout << "Tokens num:" << tokens.size() << std::endl;
         for(int i = 0; i < tokens.size(); i++) {
             model_tokens.push_back(tokens[i]);
             if(i == tokens.size() - 1)
                 out = forward(tokens[i]);
             else
                 forward(tokens[i]);
-            std::cout << "token " << i << std::endl;
         }
         return out;
     }
 
+    int sample_logits(ncnn::Mat logits, float temp = 1.0, float top_p = 0.85, float top_k = 0);
+
 private:
     ncnn::Net net;
     model_args_t *args;
+    ncnn::Layer *softmax;
+    ncnn::Layer *cumsum;
 
     std::vector<ncnn::Mat> emb_weights;
 };
