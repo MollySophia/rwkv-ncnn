@@ -38,12 +38,12 @@ del emb_weight
 
 gc.collect()
 
-if not (os.path.exists("pnnx") or os.path.exists("pnnx.exe")):
+if not os.path.exists("./pnnx"):
     print("Get pnnx first!")
     exit()
 
 print("Running pnnx...")
-os.system(f"pnnx ./output/model.pt inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}] moduleop=rwkv.rwkv_v4neo.RWKV_Channel_Mixing,rwkv.rwkv_v4neo.RWKV_Time_Mixing,rwkv.rwkv_v4neo.RWKV_Decoder")
+os.system(f"./pnnx ./output/model.pt inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}] moduleop=rwkv.rwkv_v4neo.RWKV_Channel_Mixing,rwkv.rwkv_v4neo.RWKV_Time_Mixing,rwkv.rwkv_v4neo.RWKV_Decoder")
 
 print("Running model param post processing...")
 with open("./output/model.ncnn.param", "r") as f:
