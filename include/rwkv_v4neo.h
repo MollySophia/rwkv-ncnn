@@ -52,10 +52,23 @@ struct model_args_t {
     char emb_weights_path[64];
 };
 
+struct runtime_args_t {
+    float temp;
+    float top_p;
+    float alpha_presence;
+    float alpha_frequency;
+    float penalty_decay;
+    int end_of_text;
+    int end_of_line;
+
+    int chat_len_short;
+    int chat_len_long;
+    int free_gen_len;
+};
+
 class RWKV {
 public:
     ncnn::Mat state;
-    std::vector<int> model_tokens;
 
     RWKV(model_args_t *args);
 
@@ -83,7 +96,6 @@ public:
     inline ncnn::Mat forward(std::vector<int> tokens) {
         ncnn::Mat out;
         for(int i = 0; i < tokens.size(); i++) {
-            model_tokens.push_back(tokens[i]);
             if(i == tokens.size() - 1)
                 out = forward(tokens[i]);
             else

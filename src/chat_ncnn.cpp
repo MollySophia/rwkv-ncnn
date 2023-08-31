@@ -1,6 +1,7 @@
 #include <iostream>
 #include <cstdio>
 #include <string>
+#include <map>
 #include <ncnn/net.h>
 #include "rwkv_v4neo.h"
 #include "rwkv_tokenizer.h"
@@ -32,12 +33,28 @@ rwkv::model_args_t model_args = {
     .emb_weights_path = "../output/emb_weight.bin",
 };
 
+rwkv::runtime_args_t runtime_args = {
+    .temp = 1.2,
+    .top_p = 0.5,
+    .alpha_presence = 0.4,
+    .alpha_frequency = 0.4,
+    .penalty_decay = 0.996,
+    .end_of_text = 0,
+    .end_of_line = 11,
+
+    .chat_len_short = 40,
+    .chat_len_long = 150,
+    .free_gen_len = 256,
+};
+
 rwkv::RWKV RWKV(&model_args);
 
 int main(int argc, char **argv) {
     cout.setf(ios::unitbuf);
     RWKV.load_model_files();
     rwkv::TRIE_Tokenizer tokenizer("../rwkv_vocab_v20230424.bin");
+    map<int, float> occurences;
+    vector<int> model_tokens;
     // cout << "Running prompt" << endl;
     // ncnn::Mat out = RWKV.forward(tokenizer.Encode(init_prompt));
 
@@ -49,15 +66,31 @@ int main(int argc, char **argv) {
         ncnn::Mat out = RWKV.forward(tokenizer.Encode(
             "User: " + input + "\n\nAssisstant:"
         ));
-        for(int i = 0; i < 999; i++) {
-            int output = RWKV.sample_logits(out);
-            if(output == 261)
-                break;
+        model_tokens.clear();
+        for(int i = 0; i < runtime_args.free_gen_len + 100; i++) {
+            for(auto &i : occurences) {
+                out[i.first] -= (runtime_args.alpha_frequency * i.second + runtime_args.alpha_presence);
+            }
+            int output = RWKV.sample_logits(out, runtime_args.temp, runtime_args.top_p);
+            model_tokens.push_back(output);
+            
+            for(auto &i : occurences) {
+                i.second *= runtime_args.penalty_decay;
+            }
+            
+            if(occurences.find(output) != occurences.end())
+                occurences[output] += 1;
+            else
+                occurences.insert(pair<int, float>(output, 1));
+
+            out = RWKV.forward(output);
+            out[runtime_args.end_of_text] = -999999999;
             auto output_str = tokenizer.Decode(output);
             cout << output_str;
-            out = RWKV.forward(output);
+            output_str = tokenizer.Decode(model_tokens);
+            if(output_str.find("\n\n") != output_str.npos)
+                break;
         }
-        cout << endl;
     }
     return 0;
 }
