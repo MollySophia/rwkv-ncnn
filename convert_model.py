@@ -12,9 +12,9 @@ args.pre_ffn = 0
 args.grad_cp = 0
 args.my_pos_emb = 0
 
-args.MODEL_NAME = '/home/molly/Downloads/RWKV-4-World-CHNtuned-3B-v1-20230625-ctx4096'
-args.n_layer = 32
-args.n_embd = 2560
+args.MODEL_NAME = '/home/molly/Downloads/RWKV-4-World-CHNtuned-1.5B-v1-20230620-ctx4096'
+args.n_layer = 24
+args.n_embd = 2048
 args.ctx_len = 1024
 
 print(f'loading... {args.MODEL_NAME}.pth')
@@ -43,7 +43,7 @@ if not os.path.exists("./pnnx"):
     exit()
 
 print("Running pnnx...")
-os.system(f"./pnnx ./output/model.pt inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}] moduleop=rwkv.rwkv_v4neo.RWKV_Channel_Mixing,rwkv.rwkv_v4neo.RWKV_Time_Mixing,rwkv.rwkv_v4neo.RWKV_Decoder")
+os.system(f"./pnnx ./output/model.pt fp16=0 inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}] moduleop=rwkv.rwkv_v4neo.RWKV_Channel_Mixing,rwkv.rwkv_v4neo.RWKV_Time_Mixing,rwkv.rwkv_v4neo.RWKV_Decoder,rwkv.rwkv_v4neo.RWKV_Encoder")
 
 print("Running model param post processing...")
 with open("./output/model.ncnn.param", "r") as f:
@@ -66,10 +66,10 @@ for i in lines:
         state = 'state' + str(state_index)
         i_list.insert(7, state)
         if i_list[0] == 'rwkv.rwkv_v4neo.RWKV_Time_Mixing':
-            i_list.append('19=' + str(time_mixing_layer_n))
+            i_list.append('1=' + str(time_mixing_layer_n))
             time_mixing_layer_n += 1
         else:
-            i_list.append('15=' + str(channel_mixing_layer_n))
+            i_list.append('1=' + str(channel_mixing_layer_n))
             channel_mixing_layer_n += 1
         lines[lines.index(i)] = ' '.join(i_list) + '\n'
 

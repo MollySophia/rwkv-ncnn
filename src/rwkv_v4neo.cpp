@@ -3,19 +3,24 @@
 #include <ncnn/layer_type.h>
 #include <algorithm>
 
-::ncnn::Layer* RWKV_Time_Mixing_layer_creator(void* /*userdata*/)
+::ncnn::Layer* RWKV_Time_Mixing_layer_creator(void* userdata)
 {
-    return new rwkv::RWKV_Time_Mixing;
+    return new rwkv::RWKV_Time_Mixing((rwkv::model_args_t*)userdata);
 }
 
-::ncnn::Layer* RWKV_Channel_Mixing_layer_creator(void* /*userdata*/)
+::ncnn::Layer* RWKV_Channel_Mixing_layer_creator(void* userdata)
 {
-    return new rwkv::RWKV_Channel_Mixing;
+    return new rwkv::RWKV_Channel_Mixing((rwkv::model_args_t*)userdata);
 }
 
-::ncnn::Layer* RWKV_Decoder_layer_creator(void* /*userdata*/)
+::ncnn::Layer* RWKV_Decoder_layer_creator(void* userdata)
 {
-    return new rwkv::RWKV_Decoder;
+    return new rwkv::RWKV_Decoder((rwkv::model_args_t*)userdata);
+}
+
+::ncnn::Layer* RWKV_Encoder_layer_creator(void* userdata)
+{
+    return new rwkv::RWKV_Encoder((rwkv::model_args_t*)userdata);
 }
 
 using namespace rwkv;
@@ -26,6 +31,8 @@ RWKV::RWKV(model_args_t *args) {
     this->args = args;
     state = ncnn::Mat(args->embd_num, 5 * args->layer_num);
     state.fill(0.0f);
+
+    // net.opt.use_vulkan_compute = true;
 
     for(int i = 0; i < args->layer_num; i++) {
         float *ptr = state.row(5 * i + 4);
@@ -38,9 +45,10 @@ RWKV::RWKV(model_args_t *args) {
     cumsum = ncnn::create_layer(ncnn::LayerType::CumulativeSum);
     cumsum->create_pipeline(net.opt);
 
-    net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Time_Mixing", RWKV_Time_Mixing_layer_creator);
-    net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Channel_Mixing", RWKV_Channel_Mixing_layer_creator);
-    net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Decoder", RWKV_Decoder_layer_creator);
+    net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Time_Mixing", RWKV_Time_Mixing_layer_creator, 0, (void*)args);
+    net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Channel_Mixing", RWKV_Channel_Mixing_layer_creator, 0, (void*)args);
+    net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Decoder", RWKV_Decoder_layer_creator, 0, (void*)args);
+    net.register_custom_layer("rwkv.rwkv_v4neo.RWKV_Encoder", RWKV_Encoder_layer_creator, 0, (void*)args);
 }
 
 int RWKV::load_model_files() {

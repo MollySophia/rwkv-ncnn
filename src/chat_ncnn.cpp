@@ -25,8 +25,8 @@ string init_prompt = "The following is a coherent verbose detailed conversation 
 rwkv::model_args_t model_args = {
     .float_mode = rwkv::fp32,
     .vocab_size = 65536,
-    .layer_num = 32,
-    .embd_num = 2560,
+    .layer_num = 24,
+    .embd_num = 2048,
     .ctx_len = 1024,
     .model_bin_path = "../output/model.ncnn.bin",
     .model_param_path = "../output/model.ncnn.param",
@@ -55,16 +55,17 @@ int main(int argc, char **argv) {
     rwkv::TRIE_Tokenizer tokenizer("../rwkv_vocab_v20230424.bin");
     map<int, float> occurences;
     vector<int> model_tokens;
-    // cout << "Running prompt" << endl;
-    // ncnn::Mat out = RWKV.forward(tokenizer.Encode(init_prompt));
+    // ncnn::Mat out = RWKV.forward(0);
+    cout << "Running prompt" << endl;
+    ncnn::Mat out = RWKV.forward(tokenizer.Encode(init_prompt));
 
     while (true) {
-        cout << "User: ";
+        cout << "Bob: ";
         string input;
         getline(cin, input);
-        cout << "Assisstant:";
+        cout << "Alice:";
         ncnn::Mat out = RWKV.forward(tokenizer.Encode(
-            "User: " + input + "\n\nAssisstant:"
+            "Bob: " + input + "\n\nAlice:"
         ));
         model_tokens.clear();
         for(int i = 0; i < runtime_args.free_gen_len + 100; i++) {
@@ -91,6 +92,20 @@ int main(int argc, char **argv) {
             if(output_str.find("\n\n") != output_str.npos)
                 break;
         }
+
+    #if DEBUG_TIME
+        float time_total = 0;
+        int time_count = 0;
+        for(auto i : RWKV.time_data) {
+            time_count++;
+            time_total += i;
+        }
+
+        time_total /= time_count;
+        cout << "Avg token generation time: " << time_total << " ms" << endl;
+        cout << "Avg tokes per second: " << 1000.0 / time_total << endl << endl;
+        RWKV.time_data.clear();
+    #endif
     }
     return 0;
 }

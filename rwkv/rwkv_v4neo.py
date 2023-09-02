@@ -10,10 +10,21 @@ RWKV_RESCALE_LAYER = 6 # set x=x/2 every X layer
 ############################################################################################################
 
 class RWKV_Channel_Mixing(torch.nn.Module):
-    def forward(self, x, state, layer_num, time_mix_k, time_mix_r, kw, vw, rw):
+    def forward(self, input, state, layer_num, time_mix_k, time_mix_r, kw, vw, rw, ln_weight, ln_bias, FLOAT_MODE, n_embd):
+        x = F.layer_norm(input, (n_embd,), weight=ln_weight, bias=ln_bias)
         i = int(layer_num.item())
-        xk = x * time_mix_k + state[5*i] * (1 - time_mix_k)
-        xr = x * time_mix_r + state[5*i] * (1 - time_mix_r)
+        if FLOAT_MODE == "bf16":
+            xk = x * time_mix_k + state[5*i+0].type(torch.bfloat16) * (1 - time_mix_k)
+            xr = x * time_mix_r + state[5*i+0].type(torch.bfloat16) * (1 - time_mix_r)
+            state[5*i+0] = x.float()
+        elif FLOAT_MODE == "fp16":
+            xk = x * time_mix_k + state[5*i+0].half() * (1 - time_mix_k)
+            xr = x * time_mix_r + state[5*i+0].half() * (1 - time_mix_r)
+            state[5*i+0] = x.float()            
+        else:
+            xk = x * time_mix_k + state[5*i+0] * (1 - time_mix_k)
+            xr = x * time_mix_r + state[5*i+0] * (1 - time_mix_r)
+            state[5*i+0] = x
 
         r = torch.sigmoid(rw @ xr)
         k = torch.square(torch.relu(kw @ xk))
@@ -22,15 +33,33 @@ class RWKV_Channel_Mixing(torch.nn.Module):
         return state, r * kv
 
 class RWKV_Time_Mixing(torch.nn.Module):
-    def forward(self, x, state, layer_num, time_mix_k, time_mix_v, time_mix_r, time_first, time_decay, kw, vw, rw, ow):
+    def forward(self, input, state, layer_num, time_mix_k, time_mix_v, time_mix_r, time_first, time_decay, kw, vw, rw, ow, ln_weight, ln_bias, FLOAT_MODE, n_embd):
+        x = F.layer_norm(input, (n_embd,), weight=ln_weight, bias=ln_bias)
         i = int(layer_num.item())
-        xk = x * time_mix_k + state[5*i+1] * (1 - time_mix_k)
-        xv = x * time_mix_v + state[5*i+1] * (1 - time_mix_v)
-        xr = x * time_mix_r + state[5*i+1] * (1 - time_mix_r)
+        if FLOAT_MODE == "bf16":
+            xk = x * time_mix_k + state[5*i+1].type(torch.bfloat16) * (1 - time_mix_k)
+            xv = x * time_mix_v + state[5*i+1].type(torch.bfloat16) * (1 - time_mix_v)
+            xr = x * time_mix_r + state[5*i+1].type(torch.bfloat16) * (1 - time_mix_r)
+            state[5*i+1] = x.float()
+        elif FLOAT_MODE == "fp16":
+            xk = x * time_mix_k + state[5*i+1].half() * (1 - time_mix_k)
+            xv = x * time_mix_v + state[5*i+1].half() * (1 - time_mix_v)
+            xr = x * time_mix_r + state[5*i+1].half() * (1 - time_mix_r)
+            state[5*i+1] = x.float()            
+        else:
+            xk = x * time_mix_k + state[5*i+1] * (1 - time_mix_k)
+            xv = x * time_mix_v + state[5*i+1] * (1 - time_mix_v)
+            xr = x * time_mix_r + state[5*i+1] * (1 - time_mix_r)
+            state[5*i+1] = x
 
         r = torch.sigmoid(rw @ xr)
         kk = kw @ xk
         vv = vw @ xv
+
+        if '16' in FLOAT_MODE:
+            kk = kk.float()
+            vv = vv.float()
+
         aa = state[5*i+2]
         bb = state[5*i+3]
         pp = state[5*i+4]
@@ -47,24 +76,22 @@ class RWKV_Time_Mixing(torch.nn.Module):
         state[5*i+2] = e1 * aa + e2 * vv
         state[5*i+3] = e1 * bb + e2
         state[5*i+4] = p
-        wkv = a / b
+        if FLOAT_MODE == "bf16":
+            wkv = (a / b).type(torch.bfloat16)
+        elif FLOAT_MODE == "fp16":
+            wkv = (a / b).half()
+        else:
+            wkv = a / b
         
         return state, ow @ (r * wkv)
         
 class RWKV_Decoder(torch.nn.Module):
-    def forward(self, x, head_weight):
-        return head_weight @ x
+    def forward(self, x, head_weight, ln_weight, ln_bias, n_embd):
+        return head_weight @ (F.layer_norm(x.float(), (n_embd,), weight=ln_weight, bias=ln_bias))
 
 class RWKV_Encoder(torch.nn.Module):
-    def __init__(self, args, emb, ln_weight, ln_bias):
-        super().__init__()
-        self.args = args
-        self.emb = emb
-        self.ln_weight = ln_weight
-        self.ln_bias = ln_bias
-
-    def forward(self, token_embd):
-        return F.layer_norm(token_embd, (self.args.n_embd,), weight=self.ln_weight, bias=self.ln_bias)
+    def forward(self, token_embd, ln_weight, ln_bias, n_embd):
+        return F.layer_norm(token_embd, (n_embd,), weight=ln_weight, bias=ln_bias)
     
 class RWKV(torch.nn.Module):
     def __init__(self, args):
@@ -124,7 +151,7 @@ class RWKV(torch.nn.Module):
                             setattr(here, xx[i], types.SimpleNamespace())
                     here = getattr(here, xx[i])
 
-        self.encoder = RWKV_Encoder(args, self.w.emb.weight, self.w.blocks[0].ln0.weight, self.w.blocks[0].ln0.bias)
+        self.encoder = RWKV_Encoder()
         self.encoder.eval()
         self.decoder = RWKV_Decoder()
         self.channel_mixing = RWKV_Channel_Mixing()
@@ -132,33 +159,29 @@ class RWKV(torch.nn.Module):
         self.current_layer = torch.zeros(1)
         self.eval()
 
-    def LN(self, x, w):
-        return F.layer_norm(x, (self.args.n_embd,), weight=w.weight, bias=w.bias)
-
     def forward(self, token_embd, state):
         with torch.no_grad():
-            x = self.encoder.forward(token_embd)
+            x = self.encoder(token_embd, self.w.blocks[0].ln0.weight, self.w.blocks[0].ln0.bias, self.args.n_embd)
             w = self.w
 
             for i in range(self.args.n_layer):
                 self.current_layer[0] = i
                 ww = w.blocks[i].att
-                input = self.LN(x, w.blocks[i].ln1)
-                state, output = self.time_mixing(input,
+                state, output = self.time_mixing(x,
                     state, self.current_layer,
                     ww.time_mix_k, ww.time_mix_v, ww.time_mix_r, ww.time_first, ww.time_decay, 
-                    ww.key.weight, ww.value.weight, ww.receptance.weight, ww.output.weight)
+                    ww.key.weight, ww.value.weight, ww.receptance.weight, ww.output.weight,
+                    w.blocks[i].ln1.weight, w.blocks[i].ln1.bias, self.FLOAT_MODE, self.args.n_embd)
                 x += output
                 
                 ww = w.blocks[i].ffn
-                input = self.LN(x, w.blocks[i].ln2)
-                state, output = self.channel_mixing(input, state, self.current_layer,
+                state, output = self.channel_mixing(x, state, self.current_layer,
                     ww.time_mix_k, ww.time_mix_r, 
-                    ww.key.weight, ww.value.weight, ww.receptance.weight)
+                    ww.key.weight, ww.value.weight, ww.receptance.weight,
+                    w.blocks[i].ln2.weight, w.blocks[i].ln2.bias, self.FLOAT_MODE, self.args.n_embd)
                 x += output
                 
                 if (i+1) % RWKV_RESCALE_LAYER == 0:
                     x = x / 2
 
-            x = F.layer_norm(x.float(), (self.args.n_embd,), weight=w.ln_out.weight, bias=w.ln_out.bias)
-            return self.decoder(x, w.head.weight), state
+            return self.decoder(x, w.head.weight, w.ln_out.weight, w.ln_out.bias, self.args.n_embd), state

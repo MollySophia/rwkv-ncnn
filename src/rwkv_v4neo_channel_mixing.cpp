@@ -15,7 +15,8 @@ using namespace rwkv;
         out = top_blobs[0]; \
     }
 
-RWKV_Channel_Mixing::RWKV_Channel_Mixing() {
+RWKV_Channel_Mixing::RWKV_Channel_Mixing(model_args_t *args) {
+    model_args = args;
     one_blob_only = false;
     support_inplace = true;
     sigmoid = 0;
@@ -27,39 +28,36 @@ RWKV_Channel_Mixing::RWKV_Channel_Mixing() {
     max = 0;
     square = 0;
     exp = 0;
+    layernorm = ncnn::create_layer(ncnn::LayerType::LayerNorm);
 }
 
 int RWKV_Channel_Mixing::load_param(const ncnn::ParamDict& pd) {
-    #define LOAD(to, id) \
-        to##_shape = pd.get(id, ncnn::Mat()) 
-    
-    LOAD(time_mix_k, 10);
-    LOAD(time_mix_r, 11);
-    LOAD(rw, 12);
-    LOAD(kw, 13);
-    LOAD(vw, 14);
-    layer_num = pd.get(15, 0);
+    ncnn::Mat ln_weight_shape;
+    LOAD_WEIGHT_PARAM(ln_weight, 10);
+    int *ptr = ln_weight_shape;
+    ncnn::ParamDict ln_pd;
+    ln_pd.set(0, ptr[0]);
+    layernorm->load_param(ln_pd);
 
-    #undef LOAD
+    LOAD_WEIGHT_PARAM(time_mix_k, 12);
+    LOAD_WEIGHT_PARAM(time_mix_r, 13);
+    LOAD_WEIGHT_PARAM(rw, 14);
+    LOAD_WEIGHT_PARAM(kw, 15);
+    LOAD_WEIGHT_PARAM(vw, 16);
+    layer_num = pd.get(1, 0);
+
     return 0;
 }
 
 int RWKV_Channel_Mixing::load_model(const ncnn::ModelBin& mb) {
-    #define LOAD(to, args...) \
-        ptr = to##_shape; \
-        to = mb.load(args, 1); \
-        if(to.empty()) \
-            return -100;
-
     int *ptr;
-    
-    LOAD(time_mix_k, ptr[0]);
-    LOAD(time_mix_r, ptr[0]);
-    LOAD(rw, ptr[1], ptr[0]);
-    LOAD(kw, ptr[1], ptr[0]);
-    LOAD(vw, ptr[1], ptr[0]);
+    layernorm->load_model(mb);
+    LOAD_WEIGHT_DATA(time_mix_k, ptr[0]);
+    LOAD_WEIGHT_DATA(time_mix_r, ptr[0]);
+    LOAD_WEIGHT_DATA(rw, ptr[1], ptr[0]);
+    LOAD_WEIGHT_DATA(kw, ptr[1], ptr[0]);
+    LOAD_WEIGHT_DATA(vw, ptr[1], ptr[0]);
 
-    #undef LOAD
     return 0;
 }
 
@@ -97,6 +95,8 @@ int RWKV_Channel_Mixing::create_pipeline(const ncnn::Option& opt) {
         one_sub->create_pipeline(opt);
     }
 
+    layernorm->create_pipeline(opt);
+
     _time_mix_k = time_mix_k.clone();
     _time_mix_r = time_mix_r.clone();
     one_sub->forward_inplace(_time_mix_k, opt);
@@ -122,6 +122,7 @@ int RWKV_Channel_Mixing::destroy_pipeline(const ncnn::Option& opt) {
     DESTROY(square);
     DESTROY(exp);
     DESTROY(one_sub);
+    DESTROY(layernorm);
 
     #undef DESTROY
     return 0;
@@ -129,13 +130,16 @@ int RWKV_Channel_Mixing::destroy_pipeline(const ncnn::Option& opt) {
 
 int RWKV_Channel_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, const ncnn::Option& opt) const {
     ncnn::Mat& x = bottom_top_blobs[0];
+
+    layernorm->forward_inplace(x, opt);
+
     ncnn::Mat state = bottom_top_blobs[1].row_range(5 * layer_num, 1);
     state.dims = 1;
 
     ncnn::Mat xk = mix(x, state, time_mix_k, _time_mix_k, opt);
     ncnn::Mat xr = mix(x, state, time_mix_r, _time_mix_r, opt);
 
-    float *ptr = bottom_top_blobs[1].row(5 * layer_num);
+    void *ptr = bottom_top_blobs[1].row(5 * layer_num);
     memcpy(ptr, x, sizeof(float) * x.w);
 
     F_PIPELINE(matmul, rw, xr, xr);

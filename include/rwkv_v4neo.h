@@ -4,7 +4,7 @@
 #include <vector>
 #include <iostream>
 
-#define DEBUG_TIME 0
+#define DEBUG_TIME 1
 
 #if DEBUG_TIME
 #include <chrono>
@@ -35,7 +35,7 @@ inline void pretty_print(const ncnn::Mat& m)
 namespace rwkv {
 
 enum float_mode_t {
-    fp32,
+    fp32 = 1,
     fp16,
     bf16,
 };
@@ -66,9 +66,27 @@ struct runtime_args_t {
     int free_gen_len;
 };
 
+static inline ncnn::Mat convert_fp32_to_fp16(ncnn::Mat &m, const ncnn::Option& opt) {
+    ncnn::Layer* cast = ncnn::create_layer(ncnn::LayerType::Cast);
+    ncnn::ParamDict pd;
+    ncnn::Mat out;
+    pd.set(0, 1);
+    pd.set(1, 2);
+    cast->load_param(pd);
+    cast->create_pipeline(opt);
+    cast->forward(m, out, opt);
+    cast->destroy_pipeline(opt);
+
+    delete cast;
+    return out.clone();
+}
+
 class RWKV {
 public:
     ncnn::Mat state;
+#if DEBUG_TIME
+    std::vector<int64_t> time_data;
+#endif
 
     RWKV(model_args_t *args);
 
@@ -88,7 +106,7 @@ public:
     #if DEBUG_TIME
         auto forward_time = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now() - start);
-        std::cout << "time " << forward_time.count() << std::endl;
+        time_data.push_back(forward_time.count());
     #endif
         return out;
     }
@@ -119,9 +137,23 @@ private:
     ncnn::Mat name; \
     ncnn::Mat name##_shape;
 
+#define LOAD_WEIGHT_PARAM(to, id) \
+    to##_shape = pd.get(id, ncnn::Mat());
+
+#define LOAD_WEIGHT_DATA(to, args...) \
+    ptr = to##_shape; \
+    to = mb.load(args, 1); \
+    if(model_args->float_mode == fp16) { \
+        to = convert_fp32_to_fp16(to, ncnn::Option());\
+    } \
+    if(to.empty()) \
+        return -100;
+
 class RWKV_Time_Mixing : public ncnn::Layer {
 public:
-    RWKV_Time_Mixing();
+    model_args_t *model_args;
+
+    RWKV_Time_Mixing(model_args_t *args);
 
     virtual int load_param(const ncnn::ParamDict& pd);
 
@@ -161,13 +193,16 @@ private:
     ncnn::Layer *one_sub;
     ncnn::Layer *max;
     ncnn::Layer *exp;
+    ncnn::Layer *layernorm;
 
     int layer_num;
 };
 
 class RWKV_Channel_Mixing : public ncnn::Layer {
 public:
-    RWKV_Channel_Mixing();
+    model_args_t *model_args;
+
+    RWKV_Channel_Mixing(model_args_t *args);
 
     virtual int load_param(const ncnn::ParamDict& pd);
 
@@ -201,58 +236,118 @@ private:
     ncnn::Layer *max;
     ncnn::Layer *square;
     ncnn::Layer *exp;
+    ncnn::Layer *layernorm;
 
     int layer_num;
 };
 
 class RWKV_Decoder : public ncnn::Layer {
 public:
-    RWKV_Decoder() {
+    model_args_t *model_args;
+
+    RWKV_Decoder(model_args_t *args) {
+        model_args = args;
         one_blob_only = false;
         support_inplace = true;
         matmul = 0;
+        layernorm = ncnn::create_layer(ncnn::LayerType::LayerNorm);
     }
 
     virtual int load_param(const ncnn::ParamDict& pd) {
-        ow_shape = pd.get(10, ncnn::Mat());
+        ncnn::Mat ln_weight_shape;
+        LOAD_WEIGHT_PARAM(ln_weight, 10);
+        int *ptr = ln_weight_shape;
+        ncnn::ParamDict ln_pd;
+        ln_pd.set(0, ptr[0]);
+        layernorm->load_param(ln_pd);
+
+        LOAD_WEIGHT_PARAM(ow, 12);
         return 0;
     }
 
     virtual int load_model(const ncnn::ModelBin& mb) {
         int *ptr;
-        ptr = ow_shape;
-        ow = mb.load(ptr[1], ptr[0], 1);
-        if(ow.empty())
-            return -100;
+        layernorm->load_model(mb);
+        LOAD_WEIGHT_DATA(ow, ptr[1], ptr[0]);
 
         return 0;
     }
 
     virtual int forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, const ncnn::Option& opt) const {
         ncnn::Mat& x = bottom_top_blobs[0];
+        layernorm->forward_inplace(x, opt);
         std::vector<ncnn::Mat> bottom_blobs(2);
         bottom_blobs[0] = ow;
         bottom_blobs[1] = x;
         std::vector<ncnn::Mat> top_blobs(1);
-        matmul->forward(bottom_blobs, top_blobs, opt);
-        x = top_blobs[0];
+        matmul->forward(bottom_blobs, bottom_top_blobs, opt);
         return 0;
     }
 
     virtual int create_pipeline(const ncnn::Option& opt) {
         matmul = ncnn::create_layer(ncnn::LayerType::MatMul);
         matmul->create_pipeline(opt);
+
+        layernorm->create_pipeline(opt);
+
         return 0;
     }
 
     virtual int destroy_pipeline(const ncnn::Option& opt) {
         matmul->destroy_pipeline(opt);
+        layernorm->destroy_pipeline(opt);
         return 0;
     }
 
 private:
     DECLARE_WEIGHT(ow)
     ncnn::Layer *matmul;
+    ncnn::Layer *layernorm;
+};
+
+class RWKV_Encoder : public ncnn::Layer {
+public:
+    model_args_t *model_args;
+
+    RWKV_Encoder(model_args_t *args) {
+        model_args = args;
+        one_blob_only = true;
+        support_inplace = true;
+        layernorm = ncnn::create_layer(ncnn::LayerType::LayerNorm);
+    }
+
+    virtual int load_param(const ncnn::ParamDict& pd) {
+        ncnn::Mat ln_weight_shape;
+        LOAD_WEIGHT_PARAM(ln_weight, 10);
+        int *ptr = ln_weight_shape;
+        ncnn::ParamDict ln_pd;
+        ln_pd.set(0, ptr[0]);
+        layernorm->load_param(ln_pd);
+        return 0;
+    }
+
+    virtual int load_model(const ncnn::ModelBin& mb) {
+        layernorm->load_model(mb);
+        return 0;
+    }
+
+    virtual int forward_inplace(ncnn::Mat& bottom_top_blob, const ncnn::Option& opt) const {
+        layernorm->forward_inplace(bottom_top_blob, opt);
+        return 0;
+    }
+
+    virtual int create_pipeline(const ncnn::Option& opt) {
+        layernorm->create_pipeline(opt);
+        return 0;
+    }
+
+    virtual int destroy_pipeline(const ncnn::Option& opt) {
+        layernorm->destroy_pipeline(opt);
+        return 0;
+    }
+
+private:
+    ncnn::Layer *layernorm;
 };
 
 }

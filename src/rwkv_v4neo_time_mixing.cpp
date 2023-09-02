@@ -15,7 +15,8 @@ using namespace rwkv;
         out = top_blobs[0]; \
     }
 
-RWKV_Time_Mixing::RWKV_Time_Mixing() {
+RWKV_Time_Mixing::RWKV_Time_Mixing(model_args_t *args) {
+    model_args = args;
     one_blob_only = false;
     support_inplace = true;
     sigmoid = 0;
@@ -27,47 +28,45 @@ RWKV_Time_Mixing::RWKV_Time_Mixing() {
     div_op = 0;
     max = 0;
     exp = 0;
+    layernorm = ncnn::create_layer(ncnn::LayerType::LayerNorm);
 }
 
 int RWKV_Time_Mixing::load_param(const ncnn::ParamDict& pd) {
-    #define LOAD(to, id) \
-        to##_shape = pd.get(id, ncnn::Mat());
-    
-    LOAD(time_mix_k, 10);
-    LOAD(time_mix_v, 11);
-    LOAD(time_mix_r, 12);
-    LOAD(rw, 13);
-    LOAD(kw, 14);
-    LOAD(vw, 15);
-    LOAD(time_first, 16);
-    LOAD(time_decay, 17);
-    LOAD(ow, 18);
-    layer_num = pd.get(19, 0);
+    ncnn::Mat ln_weight_shape;
+    LOAD_WEIGHT_PARAM(ln_weight, 10);
+    int *ptr = ln_weight_shape;
+    ncnn::ParamDict ln_pd;
+    ln_pd.set(0, ptr[0]);
+    layernorm->load_param(ln_pd);
+
+    LOAD_WEIGHT_PARAM(time_mix_k, 12);
+    LOAD_WEIGHT_PARAM(time_mix_v, 13);
+    LOAD_WEIGHT_PARAM(time_mix_r, 14);
+    LOAD_WEIGHT_PARAM(rw, 15);
+    LOAD_WEIGHT_PARAM(kw, 16);
+    LOAD_WEIGHT_PARAM(vw, 17);
+    LOAD_WEIGHT_PARAM(time_first, 18);
+    LOAD_WEIGHT_PARAM(time_decay, 19);
+    LOAD_WEIGHT_PARAM(ow, 20);
+    layer_num = pd.get(1, 0);
 
     #undef LOAD
     return 0;
 }
 
 int RWKV_Time_Mixing::load_model(const ncnn::ModelBin& mb) {
-    #define LOAD(to, args...) \
-        ptr = to##_shape; \
-        to = mb.load(args, 1); \
-        if(to.empty()) \
-            return -100;
-
     int *ptr;
-    
-    LOAD(time_mix_k, ptr[0]);
-    LOAD(time_mix_v, ptr[0]);
-    LOAD(time_mix_r, ptr[0]);
-    LOAD(rw, ptr[1], ptr[0]);
-    LOAD(kw, ptr[1], ptr[0]);
-    LOAD(vw, ptr[1], ptr[0]);
-    LOAD(time_first, ptr[0]);
-    LOAD(time_decay, ptr[0]);
-    LOAD(ow, ptr[1], ptr[0]);
+    layernorm->load_model(mb);
+    LOAD_WEIGHT_DATA(time_mix_k, ptr[0]);
+    LOAD_WEIGHT_DATA(time_mix_v, ptr[0]);
+    LOAD_WEIGHT_DATA(time_mix_r, ptr[0]);
+    LOAD_WEIGHT_DATA(rw, ptr[1], ptr[0]);
+    LOAD_WEIGHT_DATA(kw, ptr[1], ptr[0]);
+    LOAD_WEIGHT_DATA(vw, ptr[1], ptr[0]);
+    LOAD_WEIGHT_DATA(time_first, ptr[0]);
+    LOAD_WEIGHT_DATA(time_decay, ptr[0]);
+    LOAD_WEIGHT_DATA(ow, ptr[1], ptr[0]);
 
-    #undef LOAD
     return 0;
 }
 
@@ -105,6 +104,8 @@ int RWKV_Time_Mixing::create_pipeline(const ncnn::Option& opt) {
         one_sub->create_pipeline(opt);
     }
 
+    layernorm->create_pipeline(opt);
+
     _time_mix_k = time_mix_k.clone();
     _time_mix_v = time_mix_v.clone();
     _time_mix_r = time_mix_r.clone();
@@ -132,6 +133,7 @@ int RWKV_Time_Mixing::destroy_pipeline(const ncnn::Option& opt) {
     DESTROY(max);
     DESTROY(exp);
     DESTROY(one_sub);
+    DESTROY(layernorm);
 
     #undef DESTROY
     return 0;
@@ -139,6 +141,9 @@ int RWKV_Time_Mixing::destroy_pipeline(const ncnn::Option& opt) {
 
 int RWKV_Time_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, const ncnn::Option& opt) const {
     ncnn::Mat& x = bottom_top_blobs[0];
+
+    layernorm->forward_inplace(x, opt);
+
     ncnn::Mat state = ncnn::Mat(bottom_top_blobs[1].row_range(5 * layer_num + 1, 1));
     ncnn::Mat state_a = ncnn::Mat(bottom_top_blobs[1].row_range(5 * layer_num + 2, 1));
     ncnn::Mat state_b = ncnn::Mat(bottom_top_blobs[1].row_range(5 * layer_num + 3, 1));
@@ -153,7 +158,7 @@ int RWKV_Time_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, 
     ncnn::Mat xv = mix(x, state, time_mix_v, _time_mix_v, opt);
     ncnn::Mat xr = mix(x, state, time_mix_r, _time_mix_r, opt);
 
-    float *ptr = bottom_top_blobs[1].row(5 * layer_num + 1);
+    void *ptr = bottom_top_blobs[1].row(5 * layer_num + 1);
     memcpy(ptr, x, sizeof(float) * x.w);
 
     F_PIPELINE(matmul, rw, xr, xr);
