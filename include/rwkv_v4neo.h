@@ -92,6 +92,8 @@ public:
 
     int load_model_files();
 
+    int load_model_pack(const char *file);
+
     inline ncnn::Mat forward(int token) {
     #if DEBUG_TIME
         auto start = std::chrono::system_clock::now();

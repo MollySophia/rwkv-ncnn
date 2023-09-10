@@ -1,36 +1,39 @@
 from rwkv.rwkv_v4neo import *
-import os, types
+import os, types, sys
 import torch
 import numpy as np
 import gc
+import zipfile
+
+if len(sys.argv) != 3:
+    print("Usage: python convert_model.py [pth file] [output path]")
+    exit(1)
 
 args = types.SimpleNamespace()
 args.FLOAT_MODE = "fp32" # fp32 // fp16 // bf16
 args.vocab_size = 65536
-args.head_qk = 0
-args.pre_ffn = 0
-args.grad_cp = 0
-args.my_pos_emb = 0
 
-args.MODEL_NAME = '/home/molly/Downloads/RWKV-4-World-CHNtuned-1.5B-v1-20230620-ctx4096'
+args.MODEL_NAME = sys.argv[1][:-4]
 args.n_layer = 24
 args.n_embd = 2048
 args.ctx_len = 1024
 
-print(f'loading... {args.MODEL_NAME}.pth')
+output_path = './output'
+
+print(f'loading... {args.MODEL_NAME}')
 model = RWKV(args)
 
 current_state = torch.ones(args.n_layer * 5, args.n_embd, device="cpu")
 in0 = torch.ones(args.n_embd, device="cpu")
 
 traced_model = torch.jit.trace(model, (in0, current_state))
-if not os.path.exists("./output"):
-    os.mkdir("./output")
-traced_model.save('./output/model.pt')
-print("TorchScript IR saved to ./output/model.pt")
+if not os.path.exists(output_path):
+    os.mkdir(output_path)
+traced_model.save(os.path.join(output_path, "model.pt"))
+print(f'TorchScript IR saved to {output_path}/model.pt')
 
-emb_weight = model.w.emb.weight.numpy().tofile("./output/emb_weight.bin")
-print("emb_weight saved to ./output/emb_weight.bin")
+emb_weight = model.w.emb.weight.numpy().tofile(os.path.join(output_path, "emb_weight.bin"))
+print(f"emb_weight saved to {output_path}/emb_weight.bin")
 
 del model
 del traced_model
@@ -43,10 +46,10 @@ if not os.path.exists("./pnnx"):
     exit()
 
 print("Running pnnx...")
-os.system(f"./pnnx ./output/model.pt fp16=0 inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}] moduleop=rwkv.rwkv_v4neo.RWKV_Channel_Mixing,rwkv.rwkv_v4neo.RWKV_Time_Mixing,rwkv.rwkv_v4neo.RWKV_Decoder,rwkv.rwkv_v4neo.RWKV_Encoder")
+os.system(f"./pnnx {output_path}/model.pt fp16=0 inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}] moduleop=rwkv.rwkv_v4neo.RWKV_Channel_Mixing,rwkv.rwkv_v4neo.RWKV_Time_Mixing,rwkv.rwkv_v4neo.RWKV_Decoder,rwkv.rwkv_v4neo.RWKV_Encoder")
 
 print("Running model param post processing...")
-with open("./output/model.ncnn.param", "r") as f:
+with open(f"{output_path}/model.ncnn.param", "r") as f:
     lines = f.readlines()
 
 state = 'in1'
@@ -84,5 +87,18 @@ for i in lines:
             i_list[7] = 'out1'
             lines[lines.index(i)] = ' '.join(i_list) + '\n'
 
-with open("./output/model.ncnn.param", "w") as f:
+with open(f"{output_path}/model.ncnn.param", "w") as f:
     f.writelines(lines)
+
+with open('./output/parameters.txt', 'w') as f:
+    f.write(f'{args.vocab_size},{args.n_layer},{args.n_embd}')
+
+output_path = sys.argv[2]
+output_name = os.path.basename(sys.argv[1])[:-4]
+print(output_name)
+zip_file = zipfile.ZipFile(f'{os.path.join(output_path, output_name)}.zip', 'w')
+os.chdir("./output")
+zip_file.write('emb_weight.bin', compress_type=zipfile.ZIP_STORED)
+zip_file.write('model.ncnn.bin', compress_type=zipfile.ZIP_STORED)
+zip_file.write('model.ncnn.param', compress_type=zipfile.ZIP_STORED)
+zip_file.write('parameters.txt', compress_type=zipfile.ZIP_STORED)

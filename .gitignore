@@ -3,3 +3,4 @@ pnnx
 **/__pycache__
 debug*.*
 build
+*.zip

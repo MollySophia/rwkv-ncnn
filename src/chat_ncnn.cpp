@@ -50,14 +50,17 @@ rwkv::runtime_args_t runtime_args = {
 rwkv::RWKV RWKV(&model_args);
 
 int main(int argc, char **argv) {
+    if(argc != 3) {
+        cout << "Usage: chat_ncnn [model.zip] [vocab.bin]" << endl;
+        exit(1);
+    }
     cout.setf(ios::unitbuf);
-    RWKV.load_model_files();
-    rwkv::TRIE_Tokenizer tokenizer("../rwkv_vocab_v20230424.bin");
+    RWKV.load_model_pack(argv[1]);
+    rwkv::TRIE_Tokenizer tokenizer(argv[2]);
     map<int, float> occurences;
     vector<int> model_tokens;
-    // ncnn::Mat out = RWKV.forward(0);
-    cout << "Running prompt" << endl;
-    ncnn::Mat out = RWKV.forward(tokenizer.Encode(init_prompt));
+    // cout << "Running prompt" << endl;
+    // ncnn::Mat out = RWKV.forward(tokenizer.Encode(init_prompt));
 
     while (true) {
         cout << "Bob: ";

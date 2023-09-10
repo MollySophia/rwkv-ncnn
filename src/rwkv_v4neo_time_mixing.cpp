@@ -1,5 +1,6 @@
 #include "rwkv_v4neo.h"
 #include <ncnn/layer_type.h>
+#include <chrono>
 
 using namespace rwkv;
 
@@ -153,7 +154,7 @@ int RWKV_Time_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, 
     state_a.dims = 1;
     state_b.dims = 1;
     state_p.dims = 1;
-
+    
     ncnn::Mat xk = mix(x, state, time_mix_k, _time_mix_k, opt);
     ncnn::Mat xv = mix(x, state, time_mix_v, _time_mix_v, opt);
     ncnn::Mat xr = mix(x, state, time_mix_r, _time_mix_r, opt);
