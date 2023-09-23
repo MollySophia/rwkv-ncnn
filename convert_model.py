@@ -15,14 +15,22 @@ if not sys.argv[3] in ["fp32", "fp16", "bf16"]:
     print("Invalid argument")
     exit(1)
 
-args.vocab_size = 65536
-
 args.MODEL_NAME = sys.argv[1][:-4]
-args.n_layer = 24
-args.n_embd = 2048
-args.ctx_len = 1024
-
+args.n_layer = 0
 output_path = sys.argv[2]
+
+weights = torch.load(sys.argv[1], map_location='cpu')
+for key in weights.keys():
+    key_list = key.split(".")
+    if key_list[0] == 'blocks':
+        if int(key_list[1]) > args.n_layer:
+            args.n_layer = int(key_list[1])
+
+args.n_layer = args.n_layer + 1
+args.vocab_size = weights['emb.weight'].shape[0]
+args.n_embd = weights['emb.weight'].shape[1]
+args.ctx_len = 1024
+del weights
 
 print(f'loading... {args.MODEL_NAME}')
 model = RWKV(args)
