@@ -7,19 +7,27 @@
 ## Convert model file
 - ~~Get the latest pnnx binary and put in this folder (or use 'get_pnnx.sh' on linux)~~ Build pnnx at the latest commit and put pnnx binary in this folder(since moduleop requires some fixes in pnnx after the latest pnnx release)
 - Get the RWKV-4-World-CHNtuned-3B model file (or other rwkv models) from [https://huggingface.co/BlinkDL/rwkv-4-world/blob/main/RWKV-4-World-CHNtuned-3B-v1-20230625-ctx4096.pth](https://huggingface.co/BlinkDL/rwkv-4-world/blob/main/RWKV-4-World-CHNtuned-3B-v1-20230625-ctx4096.pth)
-- Run ```python convert_model.py [pth file] [output path]```
+- Run ```python convert_model.py [pth file] [output path] [fp32/fp16]```
+- *NOTE:fp16 not implemented yet*
 
 ## Build how-to
-Install dependencies first: msgpack-cxx, ncnn, libzip
+
+### Build on Linux
 ```
 $ mkdir build && cd build
 $ cmake ..
 $ make
 ```
+### Build with Android NDK
+```
+$ mkdir build && cd build
+$ cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28 -DANDROID_NDK=/opt/android-ndk -DCMAKE_TOOLCHAIN_FILE=/opt/android-ndk/build/cmake/android.toolchain.cmake -DCMAKE_BUILD_TYPE=Release -GNinja ..
+$ ninja
+```
 
 ## Run the model on NCNN
 - Convert the model
-- run the built binary ```./chat_rwkv_ncnn [model.zip] [vocab.bin]```
+- run the built binary ```./chat_rwkv_ncnn [model.bin] [model.param] [emb_weight.bin] [vocab.bin] [parameters.txt]```
 
 ## Example output
 ```
