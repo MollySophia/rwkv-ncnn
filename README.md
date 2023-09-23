@@ -31,7 +31,7 @@ $ ninja
 
 ## Example output
 ```
-$ ./chat_rwkv_ncnn 
+$ ./chat_rwkv_ncnn ../output/model.ncnn.bin ../output/model.ncnn.param ../output/emb_weight.bin ../rwkv_vocab_v20230424.bin ../output/parameters.txt
 Loading model files...
 User: Hello! How are you today?
 Assisstant: I'm doing well, thank you. How can I assist you today?
@@ -42,7 +42,7 @@ Assisstant: Flowers are a beautiful and delicate symbol of love and beauty. They
 ```
 
 ```
-$ ./chat_rwkv_ncnn
+$ ./chat_rwkv_ncnn ../output/model.ncnn.bin ../output/model.ncnn.param ../output/emb_weight.bin ../rwkv_vocab_v20230424.bin ../output/parameters.txt
 Loading model files...
 User: 你好
 Assisstant: 你好，有什么我可以帮助你的吗？
