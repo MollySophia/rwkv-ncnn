@@ -1,18 +1,40 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.25)
 project(RWKV-NCNN)
-
-set(DEBUG                   true)
-set(OPTIMIZATION_LEVEL      0)
-
-set(IS_SHOW_IMAGE true)
 
 set(BIN_NAME "chat_rwkv_ncnn")
 
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+set(CMAKE_CXX_STANDARD 17)
+include(FetchContent)
 
-FIND_PACKAGE(ncnn REQUIRED)
+if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    FetchContent_Declare(
+        ncnn
+        GIT_REPOSITORY https://github.com/Tencent/ncnn
+        SYSTEM
+        )
+    option(NCNN_BUILD_BENCHMARK "" OFF)
+    option(NCNN_BUILD_TOOLS "" OFF)
+    option(NCNN_BUILD_EXAMPLES "" OFF)
+    option(NCNN_BUILD_TESTS "" OFF)
+    option(NCNN_PIXEL "" OFF)
+    option(NCNN_PIXEL_ROTATE "" OFF)
+    option(NCNN_PIXEL_AFFINE "" OFF)
+    option(NCNN_PIXEL_DRAWING "" OFF)
+    option(NCNN_DISABLE_EXCEPTION "" OFF)
+    option(NCNN_OPENMP "" ON)
+    FetchContent_MakeAvailable(ncnn)
+else()
+    FIND_PACKAGE(ncnn REQUIRED)
+endif()
 
-find_package(libzip)
+FetchContent_Declare(
+        msgpack
+        GIT_REPOSITORY https://github.com/msgpack/msgpack-c
+        GIT_TAG cpp-6.1.0
+        SYSTEM
+        )
+option(MSGPACK_USE_BOOST "" OFF)
+FetchContent_MakeAvailable(msgpack)
 
 INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/src)
 INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/include)
@@ -28,4 +50,4 @@ ENDIF()
 
 ADD_EXECUTABLE(${BIN_NAME} ${sourcefiles})
 
-TARGET_LINK_LIBRARIES(${BIN_NAME} ncnn zip)
+TARGET_LINK_LIBRARIES(${BIN_NAME} ncnn msgpack-cxx)

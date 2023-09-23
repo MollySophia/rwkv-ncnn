@@ -1,6 +1,6 @@
 #pragma once
-#include <ncnn/net.h>
-#include <ncnn/layer_type.h>
+#include <net.h>
+#include <layer_type.h>
 #include <vector>
 #include <iostream>
 
@@ -50,6 +50,7 @@ struct model_args_t {
     char model_bin_path[64];
     char model_param_path[64];
     char emb_weights_path[64];
+    char parameters_path[64];
 };
 
 struct runtime_args_t {
@@ -91,8 +92,6 @@ public:
     RWKV(model_args_t *args);
 
     int load_model_files();
-
-    int load_model_pack(const char *file);
 
     inline ncnn::Mat forward(int token) {
     #if DEBUG_TIME

@@ -5,12 +5,16 @@ import numpy as np
 import gc
 import zipfile
 
-if len(sys.argv) != 3:
-    print("Usage: python convert_model.py [pth file] [output path]")
+if len(sys.argv) != 4:
+    print("Usage: python convert_model.py [pth file] [output path] [fp16/fp32]")
     exit(1)
 
 args = types.SimpleNamespace()
-args.FLOAT_MODE = "fp32" # fp32 // fp16 // bf16
+args.FLOAT_MODE = "fp32" # always fp32 when tracing the torch model
+if not sys.argv[3] in ["fp32", "fp16", "bf16"]:
+    print("Invalid argument")
+    exit(1)
+
 args.vocab_size = 65536
 
 args.MODEL_NAME = sys.argv[1][:-4]
@@ -18,7 +22,7 @@ args.n_layer = 24
 args.n_embd = 2048
 args.ctx_len = 1024
 
-output_path = './output'
+output_path = sys.argv[2]
 
 print(f'loading... {args.MODEL_NAME}')
 model = RWKV(args)
@@ -46,7 +50,12 @@ if not os.path.exists("./pnnx"):
     exit()
 
 print("Running pnnx...")
-os.system(f"./pnnx {output_path}/model.pt fp16=0 inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}] moduleop=rwkv.rwkv_v4neo.RWKV_Channel_Mixing,rwkv.rwkv_v4neo.RWKV_Time_Mixing,rwkv.rwkv_v4neo.RWKV_Decoder,rwkv.rwkv_v4neo.RWKV_Encoder")
+
+use_fp16 = 1
+if sys.argv[3] == "fp32":
+    use_fp16 = 0
+
+os.system(f"./pnnx {output_path}/model.pt fp16={use_fp16} inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}] moduleop=rwkv.rwkv_v4neo.RWKV_Channel_Mixing,rwkv.rwkv_v4neo.RWKV_Time_Mixing,rwkv.rwkv_v4neo.RWKV_Decoder,rwkv.rwkv_v4neo.RWKV_Encoder")
 
 print("Running model param post processing...")
 with open(f"{output_path}/model.ncnn.param", "r") as f:
@@ -91,14 +100,4 @@ with open(f"{output_path}/model.ncnn.param", "w") as f:
     f.writelines(lines)
 
 with open('./output/parameters.txt', 'w') as f:
-    f.write(f'{args.vocab_size},{args.n_layer},{args.n_embd}')
-
-output_path = sys.argv[2]
-output_name = os.path.basename(sys.argv[1])[:-4]
-print(output_name)
-zip_file = zipfile.ZipFile(f'{os.path.join(output_path, output_name)}.zip', 'w')
-os.chdir("./output")
-zip_file.write('emb_weight.bin', compress_type=zipfile.ZIP_STORED)
-zip_file.write('model.ncnn.bin', compress_type=zipfile.ZIP_STORED)
-zip_file.write('model.ncnn.param', compress_type=zipfile.ZIP_STORED)
-zip_file.write('parameters.txt', compress_type=zipfile.ZIP_STORED)
+    f.write(f'{args.vocab_size},{args.n_layer},{args.n_embd},{sys.argv[3]}')

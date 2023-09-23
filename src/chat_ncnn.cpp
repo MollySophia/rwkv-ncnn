@@ -2,7 +2,7 @@
 #include <cstdio>
 #include <string>
 #include <map>
-#include <ncnn/net.h>
+#include <net.h>
 #include "rwkv_v4neo.h"
 #include "rwkv_tokenizer.h"
 
@@ -31,6 +31,7 @@ rwkv::model_args_t model_args = {
     .model_bin_path = "../output/model.ncnn.bin",
     .model_param_path = "../output/model.ncnn.param",
     .emb_weights_path = "../output/emb_weight.bin",
+    .parameters_path = "../output/parameters.txt",
 };
 
 rwkv::runtime_args_t runtime_args = {
@@ -50,13 +51,17 @@ rwkv::runtime_args_t runtime_args = {
 rwkv::RWKV RWKV(&model_args);
 
 int main(int argc, char **argv) {
-    if(argc != 3) {
-        cout << "Usage: chat_ncnn [model.zip] [vocab.bin]" << endl;
+    if(argc != 6) {
+        cout << "Usage: chat_rwkv_ncnn [model.bin] [model.param] [emb_weight.bin] [vocab.bin] [parameters.txt]" << endl;
         exit(1);
     }
     cout.setf(ios::unitbuf);
-    RWKV.load_model_pack(argv[1]);
-    rwkv::TRIE_Tokenizer tokenizer(argv[2]);
+    strcpy(model_args.model_bin_path, argv[1]);
+    strcpy(model_args.model_param_path, argv[2]);
+    strcpy(model_args.emb_weights_path, argv[3]);
+    strcpy(model_args.parameters_path, argv[5]);
+    RWKV.load_model_files();
+    rwkv::TRIE_Tokenizer tokenizer(argv[4]);
     map<int, float> occurences;
     vector<int> model_tokens;
     // cout << "Running prompt" << endl;
@@ -88,7 +93,7 @@ int main(int argc, char **argv) {
                 occurences.insert(pair<int, float>(output, 1));
 
             out = RWKV.forward(output);
-            out[runtime_args.end_of_text] = -999999999;
+            out[runtime_args.end_of_text] = -999999999.0;
             auto output_str = tokenizer.Decode(output);
             cout << output_str;
             output_str = tokenizer.Decode(model_tokens);

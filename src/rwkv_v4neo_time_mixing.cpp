@@ -1,5 +1,5 @@
 #include "rwkv_v4neo.h"
-#include <ncnn/layer_type.h>
+#include <layer_type.h>
 #include <chrono>
 
 using namespace rwkv;
