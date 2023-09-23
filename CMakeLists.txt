@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 project(RWKV-NCNN)
 
+set(DEBUG true)
 set(BIN_NAME "chat_rwkv_ncnn")
 
 set(CMAKE_CXX_STANDARD 17)

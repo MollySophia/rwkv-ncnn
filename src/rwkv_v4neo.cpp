@@ -59,15 +59,6 @@ RWKV::RWKV(model_args_t *args) {
 int RWKV::load_model_files() {
     printf("Loading model files...\n");
 
-    FILE *parameters = fopen(args->parameters_path, "r");
-    if(!parameters) {
-        printf("fopen failed: %s\n", args->parameters_path);
-        return -1;
-    }
-    char tmp[5] = {0, 0, 0, 0, 0};
-    fscanf(parameters, "%d,%d,%d,%s", &args->vocab_size, &args->layer_num, &args->embd_num, tmp);
-    fclose(parameters);
-
     net.load_param(args->model_param_path);
     net.load_model(args->model_bin_path);
 

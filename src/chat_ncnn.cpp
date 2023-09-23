@@ -48,8 +48,6 @@ rwkv::runtime_args_t runtime_args = {
     .free_gen_len = 256,
 };
 
-rwkv::RWKV RWKV(&model_args);
-
 int main(int argc, char **argv) {
     if(argc != 6) {
         cout << "Usage: chat_rwkv_ncnn [model.bin] [model.param] [emb_weight.bin] [vocab.bin] [parameters.txt]" << endl;
@@ -60,6 +58,18 @@ int main(int argc, char **argv) {
     strcpy(model_args.model_param_path, argv[2]);
     strcpy(model_args.emb_weights_path, argv[3]);
     strcpy(model_args.parameters_path, argv[5]);
+
+    FILE *parameters = fopen(model_args.parameters_path, "r");
+    if(!parameters) {
+        printf("fopen failed: %s\n", model_args.parameters_path);
+        return -1;
+    }
+    char tmp[5] = {0, 0, 0, 0, 0};
+    fscanf(parameters, "%d,%d,%d,%s", &model_args.vocab_size, &model_args.layer_num, &model_args.embd_num, tmp);
+    fclose(parameters);
+
+    rwkv::RWKV RWKV(&model_args);
+
     RWKV.load_model_files();
     rwkv::TRIE_Tokenizer tokenizer(argv[4]);
     map<int, float> occurences;
