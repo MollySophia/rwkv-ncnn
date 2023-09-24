@@ -5,7 +5,6 @@
 - Optimizations are on the way
 
 ## Convert model file
-- ~~Get the latest pnnx binary and put in this folder (or use 'get_pnnx.sh' on linux)~~ Build pnnx at the latest commit and put pnnx binary in this folder(since moduleop requires some fixes in pnnx after the latest pnnx release)
 - Get the RWKV-4-World-CHNtuned-3B model file (or other rwkv models) from [https://huggingface.co/BlinkDL/rwkv-4-world/blob/main/RWKV-4-World-CHNtuned-3B-v1-20230625-ctx4096.pth](https://huggingface.co/BlinkDL/rwkv-4-world/blob/main/RWKV-4-World-CHNtuned-3B-v1-20230625-ctx4096.pth)
 - Run ```python convert_model.py [pth file] [output path] [fp32/fp16]```
 - *NOTE:fp16 not implemented yet*
