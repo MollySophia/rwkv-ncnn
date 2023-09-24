@@ -1,111 +1,170 @@
-from rwkv.rwkv_v4neo import *
-import os, types, sys
 import torch
-import numpy as np
-import gc
-import zipfile
+import sys, os
+import types
 
 if len(sys.argv) != 4:
     print("Usage: python convert_model.py [pth file] [output path] [fp16/fp32]")
     exit(1)
 
-args = types.SimpleNamespace()
-args.FLOAT_MODE = "fp32" # always fp32 when tracing the torch model
-if not sys.argv[3] in ["fp32", "fp16", "bf16"]:
-    print("Invalid argument")
-    exit(1)
-
-args.MODEL_NAME = sys.argv[1][:-4]
-args.n_layer = 0
+rescale_layer_num = 6
+n_layer = 0
+pth_path = sys.argv[1]
 output_path = sys.argv[2]
+float_mode = sys.argv[3]
+weights = types.SimpleNamespace()
 
-weights = torch.load(sys.argv[1], map_location='cpu')
-for key in weights.keys():
-    key_list = key.split(".")
-    if key_list[0] == 'blocks':
-        if int(key_list[1]) > args.n_layer:
-            args.n_layer = int(key_list[1])
+w = torch.load(pth_path, map_location='cpu')
+keys = list(w.keys())
+for x in keys:
+    block_id = 0
+    if 'blocks.' in x:
+        block_id = int(x.split('.')[1])
+        if block_id > n_layer:
+            n_layer = block_id
+    if 'att.output.weight' in x:
+        w[x] = w[x] / (2 ** int(block_id // rescale_layer_num))
+    if 'ffn.value.weight' in x:
+        w[x] = w[x] / (2 ** int(block_id // rescale_layer_num))
+                    
+    if '.time_' in x:
+        w[x] = w[x].squeeze()
+    if '.time_decay' in x:
+        w[x] = w[x].float()
+        w[x] = -torch.exp(w[x])
+    elif '.time_first' in x:
+        w[x] = w[x].float()
+    else:
+        if float_mode == "fp32":
+            w[x] = w[x].float()
+        elif float_mode == "bf16":
+            w[x] = w[x].bfloat16()
+        elif float_mode == "fp16":
+            w[x] = w[x].half()
+    w[x].requires_grad = False
 
-args.n_layer = args.n_layer + 1
-args.vocab_size = weights['emb.weight'].shape[0]
-args.n_embd = weights['emb.weight'].shape[1]
-args.ctx_len = 1024
-del weights
-
-print(f'loading... {args.MODEL_NAME}')
-model = RWKV(args)
-
-current_state = torch.ones(args.n_layer * 5, args.n_embd, device="cpu")
-in0 = torch.ones(args.n_embd, device="cpu")
-
-traced_model = torch.jit.trace(model, (in0, current_state))
-if not os.path.exists(output_path):
-    os.mkdir(output_path)
-traced_model.save(os.path.join(output_path, "model.pt"))
-print(f'TorchScript IR saved to {output_path}/model.pt')
-
-emb_weight = model.w.emb.weight.numpy().tofile(os.path.join(output_path, "emb_weight.bin"))
-print(f"emb_weight saved to {output_path}/emb_weight.bin")
-
-del model
-del traced_model
-del emb_weight
-
-gc.collect()
-
-if not os.path.exists("./pnnx"):
-    print("Get pnnx first!")
-    exit()
-
-print("Running pnnx...")
-
-use_fp16 = 1
-if sys.argv[3] == "fp32":
-    use_fp16 = 0
-
-os.system(f"./pnnx {output_path}/model.pt fp16={use_fp16} inputshape=[{args.n_embd}],[{args.n_layer * 5},{args.n_embd}] moduleop=rwkv.rwkv_v4neo.RWKV_Channel_Mixing,rwkv.rwkv_v4neo.RWKV_Time_Mixing,rwkv.rwkv_v4neo.RWKV_Decoder,rwkv.rwkv_v4neo.RWKV_Encoder")
-
-print("Running model param post processing...")
-with open(f"{output_path}/model.ncnn.param", "r") as f:
-    lines = f.readlines()
-
-state = 'in1'
-state_index = -1
-time_mixing_layer_n = 0
-channel_mixing_layer_n = 0
-
-for i in lines:
-    i_list = i.split()
-    if i_list[0] == 'Split':
-        if i_list[4] == 'in1':
-            lines.remove(i)
-    elif i_list[0] == 'rwkv.rwkv_v4neo.RWKV_Time_Mixing' or i_list[0] == 'rwkv.rwkv_v4neo.RWKV_Channel_Mixing':
-        i_list[3] = '2'
-        i_list[5] = state
-        state_index += 1
-        state = 'state' + str(state_index)
-        i_list.insert(7, state)
-        if i_list[0] == 'rwkv.rwkv_v4neo.RWKV_Time_Mixing':
-            i_list.append('1=' + str(time_mixing_layer_n))
-            time_mixing_layer_n += 1
+# store weights in weights
+keys = list(w.keys())
+for x in keys:
+    xx = x.split('.')
+    here = weights
+    for i in range(len(xx)):
+        if xx[i].isdigit():
+            ii = int(xx[i])
+            if ii not in here:
+                here[ii] = types.SimpleNamespace()
+            here = here[ii]
         else:
-            i_list.append('1=' + str(channel_mixing_layer_n))
-            channel_mixing_layer_n += 1
-        lines[lines.index(i)] = ' '.join(i_list) + '\n'
+            if i == len(xx) - 1:
+                setattr(here, xx[i], w[x])
+            elif not hasattr(here, xx[i]):
+                if xx[i+1].isdigit():
+                    setattr(here, xx[i], {})
+                else:
+                    setattr(here, xx[i], types.SimpleNamespace())
+            here = getattr(here, xx[i])
 
-for i in lines:
-    i_list = i.split()
-    if lines.index(i) == 1:
-        i_list[0] = str(int(i_list[0]) - 1)
-        i_list[1] = str(int(i_list[1]) - 1)
-        lines[1] = ' '.join(i_list) + '\n'
-    elif i_list[0] == 'rwkv.rwkv_v4neo.RWKV_Channel_Mixing':
-        if i_list[7] == 'state' + str(state_index):
-            i_list[7] = 'out1'
-            lines[lines.index(i)] = ' '.join(i_list) + '\n'
+del w
 
-with open(f"{output_path}/model.ncnn.param", "w") as f:
-    f.writelines(lines)
+n_layer = n_layer + 1
+vocab_size = weights.emb.weight.shape[0]
+n_embd = weights.emb.weight.shape[1]
 
-with open('./output/parameters.txt', 'w') as f:
-    f.write(f'{args.vocab_size},{args.n_layer},{args.n_embd},{sys.argv[3]}')
+num_ncnn_layers = n_layer * 6 + 4 + int(n_layer / rescale_layer_num)
+num_ncnn_blobs = n_layer * 10 + 4 + int(n_layer / rescale_layer_num)
+
+param_lines = ["7767517",
+                f"{num_ncnn_layers} {num_ncnn_blobs}",
+                "Input in0 0 1 in0",
+                "Input in1 0 1 in1",
+                f"rwkv.rwkv_v4neo.RWKV_Encoder encoder 1 1 in0 1 -23310=1,{n_embd} -23311=1,{n_embd}"]
+
+out0 = 1
+out1 = "in1"
+rescale_id = 0
+t = weights.blocks[0].ffn.key.weight.shape[0]
+time_mixing_params = f"-23310=1,{n_embd} -23311=1,{n_embd} -23312=1,{n_embd} -23313=1,{n_embd} -23314=1,{n_embd} -23315=2,{n_embd},{n_embd} -23316=2,{n_embd},{n_embd} -23317=2,{n_embd},{n_embd} -23318=1,{n_embd} -23319=1,{n_embd} -23320=2,{n_embd},{n_embd}"
+channel_mixing_params = f"-23310=1,{n_embd} -23311=1,{n_embd} -23312=1,{n_embd} -23313=1,{n_embd} -23314=2,{n_embd},{n_embd} -23315=2,{t},{n_embd} -23316=2,{n_embd},{t}"
+decoder_params = f"-23310=1,{n_embd} -23311=1,{n_embd} -23312=2,{vocab_size},{n_embd}"
+
+print(f"Generating {output_path}/model.ncnn.param")
+
+for layer_id in range(1, n_layer + 1):
+    i = out0
+    # Split
+    param_lines.append(f"Split rwkv_split_{2 * layer_id - 1} 1 2 {i} {i + 3} {i + 2}")
+    # Time_Mixing
+    param_lines.append(f"rwkv.rwkv_v4neo.RWKV_Time_Mixing rwkv_time_mixing_{layer_id} 2 2 {i + 3} {out1} {i + 4} {i + 6} {time_mixing_params} 1={layer_id - 1}")
+    # Add
+    param_lines.append(f"BinaryOp rwkv_add_{2 * layer_id - 1} 2 1 {i + 2} {i + 4} {i + 5} 0=0")
+
+    # Split
+    param_lines.append(f"Split rwkv_split_{2 * layer_id} 1 2 {i + 5} {i + 7} {i + 8}")
+    # Channel_Mixing
+    if layer_id == n_layer:
+        param_lines.append(f"rwkv.rwkv_v4neo.RWKV_Channel_Mixing rwkv_channel_mixing_{layer_id} 2 2 {i + 7} {i + 6} {i + 9} out1 {channel_mixing_params} 1={layer_id - 1}")
+    else:
+        param_lines.append(f"rwkv.rwkv_v4neo.RWKV_Channel_Mixing rwkv_channel_mixing_{layer_id} 2 2 {i + 7} {i + 6} {i + 9} {i + 11} {channel_mixing_params} 1={layer_id - 1}")
+    # Add
+    param_lines.append(f"BinaryOp rwkv_add_{2 * layer_id} 2 1 {i + 8} {i + 9} {i + 10} 0=0")
+
+    out0 = i + 10
+    out1 = i + 11
+
+    if layer_id == n_layer:
+        param_lines.append(f"rwkv.rwkv_v4neo.RWKV_Decoder decoder 1 1 {out0} out0 {decoder_params}")
+    elif layer_id % rescale_layer_num == 0:
+        param_lines.append(f"BinaryOp rwkv_rescale_{rescale_id} 1 1 {out0} {out1 + 1} 0=3 1=1 2=2.000000e+00")
+        rescale_id = rescale_id + 1
+        out0 = out1 + 1
+
+with open(os.path.join(output_path, "model.ncnn.param"), "w") as f:
+    f.writelines(s + '\n' for s in param_lines)
+
+def write_weights(file, tensor, float_mode = "fp32"):
+    if float_mode == "fp32":
+        file.write(tensor.numpy().tobytes())
+
+    # elif float_mode == "fp16":
+
+    # elif float_mode == "bf16":
+
+
+print(f"Generating {output_path}/model.ncnn.bin")
+with open(os.path.join(output_path, "model.ncnn.bin"), "wb") as f:
+    # encoder
+    write_weights(f, weights.blocks[0].ln0.weight)
+    write_weights(f, weights.blocks[0].ln0.bias)
+    for i in range(n_layer):
+        ww = weights.blocks[i].att
+        write_weights(f, weights.blocks[i].ln1.weight)
+        write_weights(f, weights.blocks[i].ln1.bias)
+        write_weights(f, ww.time_mix_k, float_mode)
+        write_weights(f, ww.time_mix_v, float_mode)
+        write_weights(f, ww.time_mix_r, float_mode)
+        write_weights(f, ww.receptance.weight, float_mode)
+        write_weights(f, ww.key.weight, float_mode)
+        write_weights(f, ww.value.weight, float_mode)
+        write_weights(f, ww.time_first, float_mode)
+        write_weights(f, ww.time_decay, float_mode)
+        write_weights(f, ww.output.weight, float_mode)
+
+        ww = weights.blocks[i].ffn
+        write_weights(f, weights.blocks[i].ln2.weight)
+        write_weights(f, weights.blocks[i].ln2.bias)
+        write_weights(f, ww.time_mix_k, float_mode)
+        write_weights(f, ww.time_mix_r, float_mode)
+        write_weights(f, ww.receptance.weight, float_mode)
+        write_weights(f, ww.key.weight, float_mode)
+        write_weights(f, ww.value.weight, float_mode)
+
+    # decoder
+    write_weights(f, weights.ln_out.weight)
+    write_weights(f, weights.ln_out.bias)
+    write_weights(f, weights.head.weight)
+
+print(f"Generating {output_path}/emb_weight.bin")
+weights.emb.weight.numpy().tofile(os.path.join(output_path, "emb_weight.bin"))
+
+print(f"Generating {output_path}/parameters.txt")
+with open(os.path.join(output_path, "parameters.txt"), 'w') as f:
+    f.write(f'{vocab_size},{n_layer},{n_embd},{float_mode}')
