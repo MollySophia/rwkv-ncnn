@@ -34,12 +34,14 @@ for x in keys:
     elif '.time_first' in x:
         w[x] = w[x].float()
     else:
-        if float_mode == "fp32":
-            w[x] = w[x].float()
-        elif float_mode == "bf16":
-            w[x] = w[x].bfloat16()
-        elif float_mode == "fp16":
-            w[x] = w[x].half()
+        w[x] = w[x].float()
+    # else:
+    #     if float_mode == "fp32":
+    #         w[x] = w[x].float()
+    #     elif float_mode == "bf16":
+    #         w[x] = w[x].bfloat16()
+    #     elif float_mode == "fp16":
+    #         w[x] = w[x].half()
     w[x].requires_grad = False
 
 # store weights in weights
@@ -110,12 +112,13 @@ for layer_id in range(1, n_layer + 1):
     out0 = i + 10
     out1 = i + 11
 
-    if layer_id == n_layer:
-        param_lines.append(f"rwkv.rwkv_v4neo.RWKV_Decoder decoder 1 1 {out0} out0 {decoder_params}")
-    elif layer_id % rescale_layer_num == 0:
+    if layer_id % rescale_layer_num == 0:
         param_lines.append(f"BinaryOp rwkv_rescale_{rescale_id} 1 1 {out0} {out1 + 1} 0=3 1=1 2=2.000000e+00")
         rescale_id = rescale_id + 1
         out0 = out1 + 1
+
+    if layer_id == n_layer:
+        param_lines.append(f"rwkv.rwkv_v4neo.RWKV_Decoder decoder 1 1 {out0} out0 {decoder_params}")
 
 with open(os.path.join(output_path, "model.ncnn.param"), "w") as f:
     f.writelines(s + '\n' for s in param_lines)
@@ -123,8 +126,10 @@ with open(os.path.join(output_path, "model.ncnn.param"), "w") as f:
 def write_weights(file, tensor, float_mode = "fp32"):
     if float_mode == "fp32":
         file.write(tensor.numpy().tobytes())
-
-    # elif float_mode == "fp16":
+    elif float_mode == "fp16":
+        tensor = tensor.half()
+        file.write(b'\x47\x6B\x30\x01')
+        file.write(tensor.numpy().tobytes())
 
     # elif float_mode == "bf16":
 
