@@ -1,6 +1,7 @@
 #include <iostream>
 #include <cstdio>
 #include <string>
+#include <cstring>
 #include <map>
 #include <net.h>
 #include "rwkv_v4neo.h"
@@ -67,6 +68,12 @@ int main(int argc, char **argv) {
     char tmp[5] = {0, 0, 0, 0, 0};
     fscanf(parameters, "%d,%d,%d,%s", &model_args.vocab_size, &model_args.layer_num, &model_args.embd_num, tmp);
     fclose(parameters);
+    if(!strcmp(tmp, "fp16"))
+        model_args.float_mode = rwkv::fp16;
+    else if(!strcmp(tmp, "bf16"))
+        model_args.float_mode = rwkv::bf16;
+    else
+        model_args.float_mode = rwkv::fp32;
 
     rwkv::RWKV RWKV(&model_args);
 

@@ -82,6 +82,21 @@ static inline ncnn::Mat convert_fp32_to_fp16(ncnn::Mat &m, const ncnn::Option& o
     return out.clone();
 }
 
+static inline ncnn::Mat convert_fp16_to_fp32(ncnn::Mat &m, const ncnn::Option& opt) {
+    ncnn::Layer* cast = ncnn::create_layer(ncnn::LayerType::Cast);
+    ncnn::ParamDict pd;
+    ncnn::Mat out;
+    pd.set(0, 2);
+    pd.set(1, 1);
+    cast->load_param(pd);
+    cast->create_pipeline(opt);
+    cast->forward(m, out, opt);
+    cast->destroy_pipeline(opt);
+
+    delete cast;
+    return out.clone();
+}
+
 class RWKV {
 public:
     ncnn::Mat state;
@@ -143,9 +158,10 @@ private:
 
 #define LOAD_WEIGHT_DATA(to, args...) \
     ptr = to##_shape; \
-    to = mb.load(args, 1); \
     if(model_args->float_mode == fp16) { \
-        to = convert_fp32_to_fp16(to, ncnn::Option());\
+        to = mb.load(args, 0); \
+    } else { \
+        to = mb.load(args, 1); \
     } \
     if(to.empty()) \
         return -100;

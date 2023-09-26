@@ -136,11 +136,21 @@ int RWKV_Channel_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blob
     ncnn::Mat state = bottom_top_blobs[1].row_range(5 * layer_num, 1);
     state.dims = 1;
 
+    if(model_args->float_mode == fp16) {
+        x = convert_fp32_to_fp16(x, opt);
+        state = convert_fp32_to_fp16(state, opt);
+    }
+
     ncnn::Mat xk = mix(x, state, time_mix_k, _time_mix_k, opt);
     ncnn::Mat xr = mix(x, state, time_mix_r, _time_mix_r, opt);
 
     void *ptr = bottom_top_blobs[1].row(5 * layer_num);
-    memcpy(ptr, x, sizeof(float) * x.w);
+    if(model_args->float_mode == fp16) {
+        state = convert_fp16_to_fp32(x, opt);
+        memcpy(ptr, state, sizeof(float) * state.w);
+    } else {
+        memcpy(ptr, x, sizeof(float) * x.w);
+    }
 
     F_PIPELINE(matmul, rw, xr, xr);
     sigmoid->forward_inplace(xr, opt);
@@ -149,6 +159,9 @@ int RWKV_Channel_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blob
     square->forward_inplace(xk, opt);
     F_PIPELINE(matmul, vw, xk, xk);
     F_PIPELINE(mul, xr, xk, x);
+    if(model_args->float_mode == fp16) {
+        bottom_top_blobs[0] = convert_fp16_to_fp32(x, opt);
+    }
     return 0;
 }
 

@@ -154,6 +154,14 @@ int RWKV_Time_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, 
     state_a.dims = 1;
     state_b.dims = 1;
     state_p.dims = 1;
+
+    if(model_args->float_mode == fp16) {
+        x = convert_fp32_to_fp16(x, opt);
+        state = convert_fp32_to_fp16(state, opt);
+        state_a = convert_fp32_to_fp16(state_a, opt);
+        state_b = convert_fp32_to_fp16(state_b, opt);
+        state_p = convert_fp32_to_fp16(state_p, opt);
+    }
     
     ncnn::Mat xk = mix(x, state, time_mix_k, _time_mix_k, opt);
     ncnn::Mat xv = mix(x, state, time_mix_v, _time_mix_v, opt);
@@ -198,6 +206,14 @@ int RWKV_Time_Mixing::forward_inplace(std::vector<ncnn::Mat>& bottom_top_blobs, 
     F_PIPELINE(add, tmp1, tmp2, state_a);
     F_PIPELINE(mul, e1, state_b, tmp1);
     F_PIPELINE(add, tmp1, e2, state_b);
+
+    if(model_args->float_mode == fp16) {
+        bottom_top_blobs[0] = convert_fp16_to_fp32(x, opt);
+        state = convert_fp16_to_fp32(state, opt);
+        state_a = convert_fp16_to_fp32(state_a, opt);
+        state_b = convert_fp16_to_fp32(state_b, opt);
+        state_p = convert_fp16_to_fp32(state_p, opt);
+    }
 
     ptr = bottom_top_blobs[1].row(5 * layer_num + 2);
     memcpy(ptr, state_a, sizeof(float) * state_a.w);
