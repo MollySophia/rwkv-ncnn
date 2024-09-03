@@ -2,7 +2,7 @@
 
 ## ***NOTICE***
 - This repo is currently at an early stage. Expect things like relatively low inferring speed.
-- Optimizations are on the way
+～～- Optimizations are on the way～～
 
 ## Convert model file
 - Get the RWKV-4-World-CHNtuned-3B model file (or other rwkv models) from [https://huggingface.co/BlinkDL/rwkv-4-world/blob/main/RWKV-4-World-CHNtuned-3B-v1-20230625-ctx4096.pth](https://huggingface.co/BlinkDL/rwkv-4-world/blob/main/RWKV-4-World-CHNtuned-3B-v1-20230625-ctx4096.pth)
